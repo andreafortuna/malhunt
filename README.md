@@ -1,8 +1,8 @@
-* Malhunt *
+# Malhunt
 
 Search malware in memory dumps using Volatiliy and Yara.
 
-** Requirements **
+## Requirements 
 
 - Python
 - git
