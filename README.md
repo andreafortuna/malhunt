@@ -7,3 +7,7 @@ Search malware in memory dumps using Volatiliy and Yara.
 - Python
 - git
 - volatility
+
+## ToDo
+- Caching support for yara rules
+- Webshell activity identification
