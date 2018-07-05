@@ -11,3 +11,4 @@ Search malware in memory dumps using Volatiliy and Yara.
 ## ToDo
 - Caching support for yara rules
 - Webshell activity identification
+- Better image identification
