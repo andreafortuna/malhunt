@@ -55,8 +55,6 @@ def merge_rules(all_rules):
 		fd.write(''.join(all_rules))
 
 def image_identification(filename):
-	#volProfile = os.system("volatility -f $1 imageinfo  2>/dev/null | grep \"Suggested Profile(s)\" | awk '{print $4}' | sed 's/,//'")
-	#volimageInfo = os.popen("volatility -f " + filename +  " imageinfo  2>/dev/null | grep \"Suggested Profile(s)\" | awk '{print $4}' | sed 's/,//'").read()
 	volimageInfo = os.popen("volatility -f " + filename +  " imageinfo  2>/dev/null | grep \"Suggested Profile(s)\" | awk '{print $4 $5 $6}'").read()
 	volimageInfo = volimageInfo.rstrip()
 	volProfiles = volimageInfo.split(",")
@@ -69,7 +67,6 @@ def image_identification(filename):
 
 def yarascan(filename, volProfile):
 	volOutput = os.popen("volatility -f " + filename +  " yarascan --profile=" + volProfile + " -y malware_rules.yar  2>/dev/null").read()
-#	os.system("volatility -f " + filename +  " yarascan --profile=" + volProfile + " -y malware_rules.yar  2>/dev/null")
 	with open(filename + '.malware_search.txt', 'w') as f:
 		f.write(volOutput)
 
