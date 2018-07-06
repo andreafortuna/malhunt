@@ -4,6 +4,10 @@
 import os,shutil,sys
 
 
+global MALUNTHOME
+MALUNTHOME = os.path.expanduser("~/.malhunt")
+
+
 def clean_up():
 	shutil.rmtree("./rules", ignore_errors=True)
 
@@ -55,6 +59,10 @@ def merge_rules(all_rules):
 		fd.write(''.join(all_rules))
 
 def image_identification(filename):
+	if os.path.isfile(MALUNTHOME + "/" + os.path.basename(filename) + ".imageinfo"):
+		with open(MALUNTHOME + "/" + os.path.basename(filename) + ".imageinfo",'r') as f:
+    			output = f.read()
+			return output
 	volimageInfo = os.popen("volatility -f " + filename +  " imageinfo  2>/dev/null | grep \"Suggested Profile(s)\" | awk '{print $4 $5 $6}'").read()
 	volimageInfo = volimageInfo.rstrip()
 	volProfiles = volimageInfo.split(",")
@@ -62,13 +70,26 @@ def image_identification(filename):
 		profileCheck =  os.popen("volatility -f " + filename +  " --profile=" + volProfile + " pslist 2>/dev/null").read()
 		print "	Check profile \033[1m" + volProfile + "\033[0m"
 		if "Offset" in profileCheck:
+			with open(MALUNTHOME + "/" + os.path.basename(filename) + ".imageinfo", 'w') as f:
+				f.write(volProfile)
 			return volProfile
 	return ""
 
 def yarascan(filename, volProfile):
 	volOutput = os.popen("volatility -f " + filename +  " yarascan --profile=" + volProfile + " -y malware_rules.yar  2>/dev/null").read()
-	with open(filename + '.malware_search.txt', 'w') as f:
+	report = []
+	linereport = ""
+	for line in volOutput.splitlines():
+		if line.startswith("Rule"):
+			linereport = linereport  + line.split(":")[1]
+		if line.startswith("Owner"):
+                        linereport = linereport + ", "  + line.split(":")[1] + "\n"
+			if not (linereport in report):
+				report.append(linereport)
+			linereport = ""
+	with open(os.path.basename(filename) + '.malware_search.txt', 'w') as f:
 		f.write(volOutput)
+	return report
 
 def banner_logo():
 	print """  __  __       _ _                 _   
@@ -89,8 +110,13 @@ def banner_usage():
 	print " Usage:"
 	print "	" + sys.argv[0] + " imagefile"
 
+def check_env():
+	if  not os.path.exists(MALUNTHOME):
+		os.makedirs(MALUNTHOME)
+
 def main():
 	banner_logo()
+	check_env()
 	if len(sys.argv) <2:
 		banner_usage()
 		return ""
@@ -109,8 +135,13 @@ def main():
 		return ""
 	print "Image \033[4m" + imageFile + "\033[0m identified as \033[1m" + volProfile + "\033[0m"
 	print  "\033[1mStep3 - \033[0m Starting malware artifacts search..."
-	yarascan(imageFile, volProfile)
-	print "Scan results saved in \033[4m" + imageFile + ".malware_search.txt\033[0m"
+	scanresult = yarascan(imageFile, volProfile)
+	if (scanresult != ""):
+		print "Found artifacts:"
+		print(' '.join(scanresult))
+		print "Full scan results saved in \033[4m" + os.path.basename(imageFile) + ".malware_search.txt\033[0m"
+	else:
+		print "No artifacts found!"
 
 # Main body
 if __name__ == '__main__':
