@@ -62,7 +62,7 @@ def image_identification(filename):
 	if os.path.isfile(MALUNTHOME + "/" + os.path.basename(filename) + ".imageinfo"):
 		with open(MALUNTHOME + "/" + os.path.basename(filename) + ".imageinfo",'r') as f:
     			output = f.read()
-			return output
+	 		return output
 	volimageInfo = os.popen("volatility -f " + filename +  " imageinfo  2>/dev/null | grep \"Suggested Profile(s)\" | awk '{print $4 $5 $6}'").read()
 	volimageInfo = volimageInfo.rstrip()
 	volProfiles = volimageInfo.split(",")
@@ -76,15 +76,20 @@ def image_identification(filename):
 	return ""
 
 def yarascan(filename, volProfile):
-	volOutput = os.popen("volatility -f " + filename +  " yarascan --profile=" + volProfile + " -y malware_rules.yar  2>/dev/null").read()
+	if os.path.isfile(os.path.basename(filename) + '.malware_search.txt'):
+		with open(os.path.basename(filename) + '.malware_search.txt','r') as f:
+                        volOutput = f.read()
+	else:
+ 		volOutput = os.popen("volatility -f " + filename +  " yarascan --profile=" + volProfile + " -y malware_rules.yar  2>/dev/null").read()
 	report = []
 	linereport = ""
 	for line in volOutput.splitlines():
 		if line.startswith("Rule"):
-			linereport = linereport  + line.split(":")[1]
+			linereport = linereport  + "\033[1m" +  line.split(":")[1].lstrip() + "\033[0m"
 		if line.startswith("Owner"):
-                        linereport = linereport + ", "  + line.split(":")[1] + "\n"
-			if not (linereport in report):
+                        linereport = linereport + "\t"  + line.split(":")[1].lstrip() + "\n"
+			linereport = linereport.lstrip()
+			if (not (linereport in report)) and (not ("Str_Win32_" in linereport.lstrip())):
 				report.append(linereport)
 			linereport = ""
 	with open(os.path.basename(filename) + '.malware_search.txt', 'w') as f:
@@ -136,12 +141,12 @@ def main():
 	print "Image \033[4m" + imageFile + "\033[0m identified as \033[1m" + volProfile + "\033[0m"
 	print  "\033[1mStep3 - \033[0m Starting malware artifacts search..."
 	scanresult = yarascan(imageFile, volProfile)
-	if (scanresult != ""):
-		print "Found artifacts:"
-		print(' '.join(scanresult))
+	if (len(scanresult) > 0):
+		print "\033[41m*** Found artifacts ***\033[0m"
+		print(''.join(scanresult))
 		print "Full scan results saved in \033[4m" + os.path.basename(imageFile) + ".malware_search.txt\033[0m"
 	else:
-		print "No artifacts found!"
+		print "\033[92mNo artifacts found!\033[0m"
 
 # Main body
 if __name__ == '__main__':
