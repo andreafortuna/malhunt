@@ -4,9 +4,15 @@
 import os,shutil,sys,time
 
 
-global MALHUNTHOME
+global MALHUNTHOME, VOLATILITYBIN, EXCLUDEDWORDS
 MALHUNTHOME = os.path.expanduser("~/.malhunt")
+VOLATILITYBIN = os.popen("which volatility || which vol.py").read().rstrip()
+EXCLUDEDWORDS = ['Str_Win32_', 'SurtrStrings']
 
+def check_exclusions(line):
+	if any(c in line for c in EXCLUDEDWORDS):
+		return True
+	return False
 
 def clean_up():
 	shutil.rmtree(MALHUNTHOME + "/rules", ignore_errors=True)
@@ -79,11 +85,11 @@ def image_identification(filename):
 		with open(MALHUNTHOME + "/" + os.path.basename(filename) + ".imageinfo",'r') as f:
     			output = f.read()
 	 		return output
-	volimageInfo = os.popen("volatility -f " + filename +  " imageinfo  2>/dev/null | grep \"Suggested Profile(s)\" | awk '{print $4 $5 $6}'").read()
+	volimageInfo = os.popen(VOLATILITYBIN + " -f " + filename +  " imageinfo  2>/dev/null | grep \"Suggested Profile(s)\" | awk '{print $4 $5 $6}'").read()
 	volimageInfo = volimageInfo.rstrip()
 	volProfiles = volimageInfo.split(",")
 	for volProfile in volProfiles:
-		profileCheck =  os.popen("volatility -f " + filename +  " --profile=" + volProfile + " pslist 2>/dev/null").read()
+		profileCheck =  os.popen(VOLATILITYBIN + " -f " + filename +  " --profile=" + volProfile + " pslist 2>/dev/null").read()
 		print "	Check profile \033[1m" + volProfile + "\033[0m"
 		if "Offset" in profileCheck:
 			with open(MALHUNTHOME + "/" + os.path.basename(filename) + ".imageinfo", 'w') as f:
@@ -96,7 +102,7 @@ def yarascan(filename, volProfile):
 		with open(os.path.basename(filename) + '.malware_search','r') as f:
                         volOutput = f.read()
 	else:
- 		volOutput = os.popen("volatility -f " + filename +  " yarascan --profile=" + volProfile + " -y " + os.path.expanduser("~/.malhunt") +  "/malware_rules.yar  2>/dev/null").read()
+ 		volOutput = os.popen(VOLATILITYBIN + " -f " + filename +  " yarascan --profile=" + volProfile + " -y " + os.path.expanduser("~/.malhunt") +  "/malware_rules.yar  2>/dev/null").read()
 	report = []
 	linereport = ""
 	for line in volOutput.splitlines():
@@ -105,7 +111,7 @@ def yarascan(filename, volProfile):
 		if line.startswith("Owner"):
                         linereport = linereport + "\t"  + line.split(":")[1].lstrip() + "\n"
 			linereport = linereport.lstrip()
-			if (not (linereport in report)) and (not ("Str_Win32_" in linereport.lstrip())):
+			if (not (linereport in report)) and (not check_exclusions(linereport.lstrip())):
 				report.append(linereport)
 			linereport = ""
 	with open(os.path.basename(filename) + '.malware_search', 'w') as f:
