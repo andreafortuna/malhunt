@@ -118,6 +118,11 @@ def yarascan(filename, volProfile):
 		f.write(volOutput)
 	return report
 
+def dump_process(imagefile, profile, PID):
+	# volatility -f /mnt/data/Evidences/QLAB/OMHWCD3/OMHWCD3-20170717-143836.raw --profile=Win7SP1x86_23418 procdump -D ./ -p 3108 -u --memory
+	return ""
+
+
 def banner_logo():
 	print """  __  __       _ _                 _   
  |  \/  |     | | |               | |  
