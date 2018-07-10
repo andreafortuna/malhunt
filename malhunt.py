@@ -9,6 +9,15 @@ MALHUNTHOME = os.path.expanduser("~/.malhunt")
 VOLATILITYBIN = os.popen("which volatility || which vol.py").read().rstrip()
 EXCLUDEDWORDS = ['Str_Win32_', 'SurtrStrings']
 
+
+class SProcess(object):
+	def __init__(self, rule, process, pid):
+		self.rule = rule
+		self.process = process
+		self.pid = pid
+
+
+
 def check_exclusions(line):
 	if any(c in line for c in EXCLUDEDWORDS):
 		return True
@@ -105,22 +114,31 @@ def yarascan(filename, volProfile):
  		volOutput = os.popen(VOLATILITYBIN + " -f " + filename +  " yarascan --profile=" + volProfile + " -y " + os.path.expanduser("~/.malhunt") +  "/malware_rules.yar  2>/dev/null").read()
 	report = []
 	linereport = ""
+	rule = ""
+	process = ""
+	pid = ""
 	for line in volOutput.splitlines():
 		if line.startswith("Rule"):
-			linereport = linereport  + "\033[1m" +  line.split(":")[1].lstrip() + "\033[0m"
+			rule = line.split(":")[1].lstrip()
 		if line.startswith("Owner"):
-                        linereport = linereport + "\t"  + line.split(":")[1].lstrip() + "\n"
-			linereport = linereport.lstrip()
-			if (not (linereport in report)) and (not check_exclusions(linereport.lstrip())):
-				report.append(linereport)
-			linereport = ""
+                        process = line.split(":")[1].lstrip().split()[1]
+                        pid = line.split(":")[1].lstrip().split()[3]
+			singleProcess = SProcess(rule,process,pid)
+			if (not (singleProcess in report)) and (not (check_exclusions(rule))):
+				report.append(singleProcess)
+				dump_process(filename,volProfile,pid)
+			rule = ""
+			process = ""
+			pid = ""
 	with open(os.path.basename(filename) + '.malware_search', 'w') as f:
 		f.write(volOutput)
 	return report
 
 def dump_process(imagefile, profile, PID):
-	# volatility -f /mnt/data/Evidences/QLAB/OMHWCD3/OMHWCD3-20170717-143836.raw --profile=Win7SP1x86_23418 procdump -D ./ -p 3108 -u --memory
-	return ""
+	if not os.path.isdir("./" + os.path.basename(imagefile) + "_artifacts"):
+		os.makedirs("./" + os.path.basename(imagefile) + "_artifacts")	
+	volOutput = os.popen(VOLATILITYBIN + " -f " + imagefile +  " --profile=" + profile + " procdump -D \"./" + os.path.basename(imagefile) +  "_artifacts\" -p " + PID + " -u --memory 2>/dev/null").read()
+	return volOutput
 
 
 def banner_logo():
@@ -173,10 +191,14 @@ def main():
 	scanresult = yarascan(imageFile, volProfile)
 	if (len(scanresult) > 0):
 		print "\033[41m**** Found artifacts ****\033[0m"
-		print(''.join(scanresult))
-		print "Full scan results saved in \033[4m" + os.path.basename(imageFile) + ".malware_search\033[0m"
+		for singleProcess in scanresult:
+			print "\t \033[1m" + singleProcess.rule + "\033[0m: \033[4m" + singleProcess.process + "\033[0m (" + singleProcess.pid + ")"
+			
+		print "\nArtifacted saved into ./" + os.path.basename(imageFile) + "/"
 	else:
 		print "\033[92mNo artifacts found!\033[0m"
+
+	print "Full scan results saved in \033[4m" + os.path.basename(imageFile) + ".malware_search\033[0m"
 
 # Main body
 if __name__ == '__main__':
