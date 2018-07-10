@@ -20,8 +20,8 @@ class SProcess(object):
 
 def check_exclusions(line):
 	if any(c in line for c in EXCLUDEDWORDS):
-		return True
-	return False
+		return False
+	return True
 
 def clean_up():
 	shutil.rmtree(MALHUNTHOME + "/rules", ignore_errors=True)
@@ -119,14 +119,16 @@ def yarascan(filename, volProfile):
 	pid = ""
 	for line in volOutput.splitlines():
 		if line.startswith("Rule"):
-			rule = line.split(":")[1].lstrip()
+			rule = line.split(":")[1].lstrip().rstrip()
 		if line.startswith("Owner"):
-                        process = line.split(":")[1].lstrip().split()[1]
-                        pid = line.split(":")[1].lstrip().split()[3]
+                        process = line.split(":")[1].lstrip().split()[1].lstrip().rstrip()
+                        pid = line.split(":")[1].lstrip().split()[3].lstrip().rstrip()
 			singleProcess = SProcess(rule,process,pid)
-			if (not (singleProcess in report)) and (not (check_exclusions(rule))):
-				report.append(singleProcess)
-				dump_process(filename,volProfile,pid)
+
+			if check_exclusions(rule):
+				if len(filter(lambda SProcess: SProcess.pid == pid, report)) ==0:
+				#if singleProcess not in report:
+					report.append(singleProcess)
 			rule = ""
 			process = ""
 			pid = ""
@@ -137,7 +139,11 @@ def yarascan(filename, volProfile):
 def dump_process(imagefile, profile, PID):
 	if not os.path.isdir("./" + os.path.basename(imagefile) + "_artifacts"):
 		os.makedirs("./" + os.path.basename(imagefile) + "_artifacts")	
-	volOutput = os.popen(VOLATILITYBIN + " -f " + imagefile +  " --profile=" + profile + " procdump -D \"./" + os.path.basename(imagefile) +  "_artifacts\" -p " + PID + " -u --memory 2>/dev/null").read()
+	volOutput = os.popen(VOLATILITYBIN + " -f " + imagefile +  " --profile=" + profile + " procdump -D \"./" + os.path.basename(imagefile) +  "_artifacts/\" -p " + PID + " -u --memory 2>/dev/null").read()
+	volOutput = os.popen(VOLATILITYBIN + " -f " + imagefile +  " --profile=" + profile + " handles -p " + PID + " 2>/dev/null").read()
+	with open("./" + os.path.basename(imagefile) + '_artifacts/' + PID  + '.handles', 'w') as f:
+		f.write(volOutput)
+
 	return volOutput
 
 
@@ -192,9 +198,12 @@ def main():
 	if (len(scanresult) > 0):
 		print "\033[41m**** Found artifacts ****\033[0m"
 		for singleProcess in scanresult:
-			print "\t \033[1m" + singleProcess.rule + "\033[0m: \033[4m" + singleProcess.process + "\033[0m (" + singleProcess.pid + ")"
-			
-		print "\nArtifacted saved into ./" + os.path.basename(imageFile) + "/"
+			sys.stdout.write("\t \033[1m" + singleProcess.rule + "\033[0m: \033[4m" + singleProcess.process + "\033[0m (" + singleProcess.pid + ")...")
+			sys.stdout.write('saving process memory and handles...')
+			sys.stdout.flush()
+			dump_process(imageFile,volProfile,singleProcess.pid)
+			print "done!"
+		print "\nArtifacted saved into ./" + os.path.basename(imageFile) + "_artifacts/"
 	else:
 		print "\033[92mNo artifacts found!\033[0m"
 
