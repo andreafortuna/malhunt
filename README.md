@@ -10,6 +10,8 @@ Search malware in memory dumps using Volatiliy and Yara.
 
 ## How it works
 
+![Malhunt demo](/img/malhunt.gif)
+
 The script applies my workflow for malware analysis:
 
 - Performs image identification
