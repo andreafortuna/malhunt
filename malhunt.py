@@ -7,6 +7,7 @@ import os,shutil,sys,time
 global MALHUNTHOME, VOLATILITYBIN, EXCLUDEDWORDS
 MALHUNTHOME = os.path.expanduser("~/.malhunt")
 VOLATILITYBIN = os.popen("which volatility || which vol.py").read().rstrip()
+CLAMSCANBIN = os.popen("which clamscan").read().rstrip()
 EXCLUDEDWORDS = ['Str_Win32_', 'SurtrStrings']
 
 
@@ -107,8 +108,8 @@ def image_identification(filename):
 	return ""
 
 def yarascan(filename, volProfile):
-	if os.path.isfile(os.path.basename(filename) + '.malware_search'):
-		with open(os.path.basename(filename) + '.malware_search','r') as f:
+	if os.path.isfile(MALHUNTHOME + "/" + os.path.basename(filename) + '.malware_search'):
+		with open(MALHUNTHOME + "/" + os.path.basename(filename) + '.malware_search','r') as f:
                         volOutput = f.read()
 	else:
  		volOutput = os.popen(VOLATILITYBIN + " -f " + filename +  " yarascan --profile=" + volProfile + " -y " + os.path.expanduser("~/.malhunt") +  "/malware_rules.yar  2>/dev/null").read()
@@ -132,19 +133,26 @@ def yarascan(filename, volProfile):
 			rule = ""
 			process = ""
 			pid = ""
-	with open(os.path.basename(filename) + '.malware_search', 'w') as f:
+	with open(MALHUNTHOME + "/" + os.path.basename(filename) + '.malware_search', 'w') as f:
 		f.write(volOutput)
 	return report
 
 def dump_process(imagefile, profile, PID):
-	if not os.path.isdir("./" + os.path.basename(imagefile) + "_artifacts"):
-		os.makedirs("./" + os.path.basename(imagefile) + "_artifacts")	
-	volOutput = os.popen(VOLATILITYBIN + " -f " + imagefile +  " --profile=" + profile + " procdump -D \"./" + os.path.basename(imagefile) +  "_artifacts/\" -p " + PID + " -u --memory 2>/dev/null").read()
+	if not os.path.isdir(os.getcwd() + "/" + os.path.basename(imagefile) + "_artifacts"):
+		os.makedirs(os.getcwd() + "/" + os.path.basename(imagefile) + "_artifacts")	
+	savedFile = os.popen(VOLATILITYBIN + " -f " + imagefile +  " --profile=" + profile + " procdump -D \"./" + os.path.basename(imagefile) +  "_artifacts/\" -p " + PID + " 2>/dev/null | grep OK: | awk '{print $5}'").read().lstrip().rstrip()
 	volOutput = os.popen(VOLATILITYBIN + " -f " + imagefile +  " --profile=" + profile + " handles -p " + PID + " 2>/dev/null").read()
-	with open("./" + os.path.basename(imagefile) + '_artifacts/' + PID  + '.handles', 'w') as f:
+	with open(os.getcwd() + "/" + os.path.basename(imagefile) + '_artifacts/' + PID  + '.handles', 'w') as f:
 		f.write(volOutput)
 
-	return volOutput
+	return savedFile
+
+def clamscan_artifact(imagefile, artifactfile):
+	clamOutput = ""
+	clamOutput = os.popen(CLAMSCANBIN + " --no-summary " + os.getcwd() + "/" + os.path.basename(imagefile) + "_artifacts/" + artifactfile).read().lstrip().rstrip()	
+	clamOutput = clamOutput.split(":")[1].rstrip().lstrip()
+	return clamOutput
+
 
 
 def banner_logo():
@@ -178,6 +186,8 @@ def main():
 		return ""
 	imageFile = sys.argv[1]
 	clean_up()
+	if CLAMSCANBIN == "":
+		print ("\033[41mClamscan not installed...\033[0m")
 	if not os.path.isfile(MALHUNTHOME + '/malware_rules.yar'):
 		print "\033[1m* \033[0mUpdate malware yara rules..."
 		get_rules_from_git()
@@ -196,18 +206,26 @@ def main():
 	print  "\033[1m*** \033[0mStarting malware artifacts search..."
 	scanresult = yarascan(imageFile, volProfile)
 	if (len(scanresult) > 0):
-		print "\033[41m**** Found artifacts ****\033[0m"
+		print "\033[41m**** Suspicious processes ****\033[0m"
 		for singleProcess in scanresult:
-			sys.stdout.write("\t \033[1m" + singleProcess.rule + "\033[0m: \033[4m" + singleProcess.process + "\033[0m (" + singleProcess.pid + ")...")
-			sys.stdout.write('saving process memory and handles...')
+			sys.stdout.write("\t \033[1m" + singleProcess.rule + "\033[0m: \033[4m" + singleProcess.process + "\033[0m (" + singleProcess.pid + ")\n")
 			sys.stdout.flush()
-			dump_process(imageFile,volProfile,singleProcess.pid)
+			sys.stdout.write('\t\tSaving process memory and handles...')
+			sys.stdout.flush()
+			artifactFile = dump_process(imageFile,volProfile,singleProcess.pid)
 			print "done!"
-		print "\nArtifacted saved into ./" + os.path.basename(imageFile) + "_artifacts/"
+			sys.stdout.write('\t\tScanning artifact with ClamScan...')
+			sys.stdout.flush()
+			clamscanOutput = clamscan_artifact(imageFile,artifactFile)
+			if (clamscanOutput != "OK"):
+				print ("\033[41m" + clamscanOutput + "\033[0m")
+			else:
+				print ("\x1b[6;30;42mOK\x1b[6;30;0m")
+		print "\nArtifacts saved into " + os.getcwd() + "/" + os.path.basename(imageFile) + "_artifacts/"
 	else:
 		print "\033[92mNo artifacts found!\033[0m"
 
-	print "Full scan results saved in \033[4m" + os.path.basename(imageFile) + ".malware_search\033[0m"
+	print "Full scan results saved in \033[4m" + MALHUNTHOME + "/"  + os.path.basename(imageFile) + ".malware_search\033[0m"
 
 # Main body
 if __name__ == '__main__':
