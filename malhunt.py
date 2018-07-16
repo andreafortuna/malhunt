@@ -187,7 +187,7 @@ def banner_logo():
  | |  | | (_| | | | | | |_| | | | | |_ 
  |_|  |_|\__,_|_|_| |_|\__,_|_| |_|\__|
                                        
-Hunt malware with Volatility and Yara!
+Hunt malware with Volatility!
 
 Andrea Fortuna
 andrea@andreafortuna.org
