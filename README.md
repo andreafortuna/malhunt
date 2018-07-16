@@ -1,6 +1,6 @@
 # Malhunt
 
-Search malware in memory dumps using Volatiliy and Yara.
+Search malware in memory dumps using Volatiliy.
 
 ## Requirements 
 
