@@ -107,13 +107,13 @@ def image_identification(filename):
 			return volProfile
 	return ""
 
-def yarascan(filename, volProfile):
+def yarascan(filename, volProfile, processList):
 	if os.path.isfile(MALHUNTHOME + "/" + os.path.basename(filename) + '.malware_search'):
 		with open(MALHUNTHOME + "/" + os.path.basename(filename) + '.malware_search','r') as f:
                         volOutput = f.read()
 	else:
  		volOutput = os.popen(VOLATILITYBIN + " -f " + filename +  " yarascan --profile=" + volProfile + " -y " + os.path.expanduser("~/.malhunt") +  "/malware_rules.yar  2>/dev/null").read()
-	report = []
+	#report = []
 	linereport = ""
 	rule = ""
 	process = ""
@@ -127,15 +127,39 @@ def yarascan(filename, volProfile):
 			singleProcess = SProcess(rule,process,pid)
 
 			if check_exclusions(rule):
-				if len(filter(lambda SProcess: SProcess.pid == pid, report)) ==0:
+				if len(filter(lambda SProcess: SProcess.pid == pid, processList)) ==0:
 				#if singleProcess not in report:
-					report.append(singleProcess)
+					processList.append(singleProcess)
 			rule = ""
 			process = ""
 			pid = ""
 	with open(MALHUNTHOME + "/" + os.path.basename(filename) + '.malware_search', 'w') as f:
 		f.write(volOutput)
-	return report
+	return processList
+
+def malfindscan(filename, volProfile, processList):
+        if os.path.isfile(MALHUNTHOME + "/" + os.path.basename(filename) + '.malfind_search'):
+                with open(MALHUNTHOME + "/" + os.path.basename(filename) + '.malfind_search','r') as f:
+                        volOutput = f.read()
+        else:
+                volOutput = os.popen(VOLATILITYBIN + " -f " + filename +  " malfind --profile=" + volProfile + "  2>/dev/null | grep \"Process: \"" ).read()
+        linereport = ""
+        rule = ""
+        process = ""
+        pid = ""
+        for line in volOutput.splitlines():
+		rule =  "malfind"
+		process = line.split(" ")[1].lstrip().rstrip()
+		pid = line.split(" ")[3].lstrip().rstrip()
+		singleProcess = SProcess(rule,process,pid)
+		if len(filter(lambda SProcess: SProcess.pid == pid, processList)) ==0:
+			processList.append(singleProcess)
+        with open(MALHUNTHOME + "/" + os.path.basename(filename) + '.malfind_search', 'w') as f:
+                f.write(volOutput)
+        return processList
+
+
+
 
 def dump_process(imagefile, profile, PID):
 	if not os.path.isdir(os.getcwd() + "/" + os.path.basename(imagefile) + "_artifacts"):
@@ -203,8 +227,20 @@ def main():
 		print "Image identification failed!"
 		return ""
 	print "Image \033[4m" + imageFile + "\033[0m identified as \033[1m" + volProfile + "\033[0m"
-	print  "\033[1m*** \033[0mStarting malware artifacts search..."
-	scanresult = yarascan(imageFile, volProfile)
+
+	scanresult = []
+
+	sys.stdout.write("\033[1m*** \033[0mStarting malware artifacts search...")
+	sys.stdout.flush()
+	sys.stdout.write("Yarascan...")
+	sys.stdout.flush()
+	scanresult = yarascan(imageFile, volProfile, scanresult)
+	sys.stdout.write("Malfind...")
+	sys.stdout.flush()
+	scanresult = malfindscan(imageFile, volProfile, scanresult)
+	sys.stdout.write("Done!\n")
+	sys.stdout.flush()
+
 	if (len(scanresult) > 0):
 		print "\033[41m**** Suspicious processes ****\033[0m"
 		for singleProcess in scanresult:
