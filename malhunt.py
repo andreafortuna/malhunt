@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # encoding: utf-8
 
-import os,shutil,sys,time
+import os,shutil,sys,time, requests
 
 
 global MALHUNTHOME, VOLATILITYBIN, EXCLUDEDWORDS
@@ -107,6 +107,14 @@ def image_identification(filename):
 			return volProfile
 	return ""
 
+
+def maliciousIP(ipaddress):
+	response = requests.get("http://check.getipintel.net/check.php?ip=" + ipaddress + "&contact=abuse@getipinterl.net")
+
+	if response.text == "1":
+		return True
+	return False
+
 def yarascan(filename, volProfile, processList):
 	if os.path.isfile(MALHUNTHOME + "/" + os.path.basename(filename) + '.malware_search'):
 		with open(MALHUNTHOME + "/" + os.path.basename(filename) + '.malware_search','r') as f:
@@ -158,6 +166,37 @@ def malfindscan(filename, volProfile, processList):
                 f.write(volOutput)
         return processList
 
+def networkscan(filename, volProfile, processList):
+
+	volCommand = "netscan"
+	volFilter = " | grep -v \"LISTENING\""
+	ipColumn = 3
+	pidColumn = 5
+
+	if volProfile.startswith("Win2003") or volProfile.startswith("WinXP"):
+		volCommand = "connscan"
+		volFilter = ""
+		ipColumn = 2
+		pidColumn = 3
+        if os.path.isfile(MALHUNTHOME + "/" + os.path.basename(filename) + '.network_search'):
+                with open(MALHUNTHOME + "/" + os.path.basename(filename) + '.network_search','r') as f:
+                        volOutput = f.read()
+        else:
+                volOutput = os.popen(VOLATILITYBIN + " -f " + filename +  " " + volCommand + " --profile=" + volProfile + "  2>/dev/null " + volFilter ).read()
+        for line in volOutput.splitlines():
+                rule =  "network"
+                process = "N.A."
+		ip = line.split()[ipColumn].lstrip().rstrip()
+                pid = line.split()[pidColumn].lstrip().rstrip()
+		if (ip ==""):
+			continue
+		if (maliciousIP(ip.split(":")[0].lstrip().rstrip())):
+	                singleProcess = SProcess(rule,process,pid)
+        	        if len(filter(lambda SProcess: SProcess.pid == pid, processList)) ==0:
+                	        processList.append(singleProcess)
+        with open(MALHUNTHOME + "/" + os.path.basename(filename) + '.network_search', 'w') as f:
+                f.write(volOutput)
+        return processList
 
 
 
@@ -238,6 +277,9 @@ def main():
 	sys.stdout.write("Malfind...")
 	sys.stdout.flush()
 	scanresult = malfindscan(imageFile, volProfile, scanresult)
+        sys.stdout.write("Network...")
+        sys.stdout.flush()
+        scanresult = networkscan(imageFile, volProfile, scanresult)
 	sys.stdout.write("Done!\n")
 	sys.stdout.flush()
 
