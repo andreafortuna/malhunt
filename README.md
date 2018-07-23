@@ -7,6 +7,7 @@ Search malware in memory dumps using Volatiliy.
 - Python
 - Git
 - Volatility
+- Clamscan
 
 ## How it works
 
