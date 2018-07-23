@@ -16,10 +16,7 @@ Search malware in memory dumps using Volatiliy.
 The script applies my workflow for malware analysis:
 
 - Performs image identification
-- Scans processes with yara rules in order to find suspicious artifacts
+- Scans processes with yara rules, malfind and network blacklist in order to find suspicious artifacts
 - Saves memory dump and handles of suspicious processes
-- Scans saved processes with clamscan (when available)
+- Scans saved processes with clamscan
 
-## ToDo
-
-- OS identification and network analysis
