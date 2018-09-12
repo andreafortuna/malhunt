@@ -94,7 +94,7 @@ def image_identification(filename):
 	if os.path.isfile(MALHUNTHOME + "/" + os.path.basename(filename) + ".imageinfo"):
 		with open(MALHUNTHOME + "/" + os.path.basename(filename) + ".imageinfo",'r') as f:
     			output = f.read()
-	 		return output
+	 		return output.rstrip()
 	volimageInfo = os.popen(VOLATILITYBIN + " -f " + filename +  " imageinfo  2>/dev/null | grep \"Suggested Profile(s)\" | awk '{print $4 $5 $6}'").read()
 	volimageInfo = volimageInfo.rstrip()
 	volProfiles = volimageInfo.split(",")
@@ -212,9 +212,12 @@ def dump_process(imagefile, profile, PID):
 
 def clamscan_artifact(imagefile, artifactfile):
 	clamOutput = ""
+	#print "DEBUG: " + os.getcwd() + "/" + os.path.basename(imagefile) + "_artifacts/" + artifactfile + " ------\n"
 	clamOutput = os.popen(CLAMSCANBIN + " --no-summary " + os.getcwd() + "/" + os.path.basename(imagefile) + "_artifacts/" + artifactfile).read().lstrip().rstrip()	
+	
+	#print "--- DEBUG:" + clamOutput + " ------" 
 	clamOutput = clamOutput.split(":")[1].rstrip().lstrip()
-	return clamOutput
+	return clamOutput.rstrip().lstrip()
 
 
 
@@ -291,7 +294,11 @@ def main():
 			sys.stdout.write('\t\tSaving process memory and handles...')
 			sys.stdout.flush()
 			artifactFile = dump_process(imageFile,volProfile,singleProcess.pid)
-			print "done!"
+			if (artifactFile != ""):
+				print "done!"
+			else:
+				print ("\x1b[6;30;42mNo file!\x1b[6;30;0m")
+				continue
 			sys.stdout.write('\t\tScanning artifact with ClamScan...')
 			sys.stdout.flush()
 			clamscanOutput = clamscan_artifact(imageFile,artifactFile)
