@@ -233,7 +233,7 @@ Hunt malware with Volatility!
 
 Andrea Fortuna
 andrea@andreafortuna.org
-https://www.andreafortuna.org
+https://andreafortuna.org
 """
 
 def banner_usage():
