@@ -45,13 +45,13 @@ def list_yara_files():
 			rule_filename, rule_file_extension = os.path.splitext(file_name)
 			if rule_file_extension == ".yar" or rule_file_extension == ".yara":
 				all_yara_files.append(os.path.join(root, file_name))
-	# BETA - Search for webshells
-        for root, directories, filenames in os.walk(MALHUNTHOME + "/rules/Webshells"):
-                filenames.sort()
-                for file_name in filenames:
-                        rule_filename, rule_file_extension = os.path.splitext(file_name)
-                        if rule_file_extension == ".yar" or rule_file_extension == ".yara":
-                                all_yara_files.append(os.path.join(root, file_name))
+		# BETA - Search for webshells
+		for root, directories, filenames in os.walk(MALHUNTHOME + "/rules/Webshells"):
+			filenames.sort()
+			for file_name in filenames:
+				rule_filename, rule_file_extension = os.path.splitext(file_name)
+				if rule_file_extension == ".yar" or rule_file_extension == ".yara":
+					all_yara_files.append(os.path.join(root, file_name))
 
 
 
@@ -93,14 +93,14 @@ def merge_rules(all_rules):
 def image_identification(filename):
 	if os.path.isfile(MALHUNTHOME + "/" + os.path.basename(filename) + ".imageinfo"):
 		with open(MALHUNTHOME + "/" + os.path.basename(filename) + ".imageinfo",'r') as f:
-    			output = f.read()
-	 		return output.rstrip()
+			output = f.read()
+			return output.rstrip()
 	volimageInfo = os.popen(VOLATILITYBIN + " -f " + filename +  " imageinfo  2>/dev/null | grep \"Suggested Profile(s)\" | awk '{print $4 $5 $6}'").read()
 	volimageInfo = volimageInfo.rstrip()
 	volProfiles = volimageInfo.split(",")
 	for volProfile in volProfiles:
 		profileCheck =  os.popen(VOLATILITYBIN + " -f " + filename +  " --profile=" + volProfile + " pslist 2>/dev/null").read()
-		print "	Check profile \033[1m" + volProfile + "\033[0m"
+		print("	Check profile \033[1m" + volProfile + "\033[0m")
 		if "Offset" in profileCheck:
 			with open(MALHUNTHOME + "/" + os.path.basename(filename) + ".imageinfo", 'w') as f:
 				f.write(volProfile)
@@ -117,10 +117,10 @@ def maliciousIP(ipaddress):
 
 def yarascan(filename, volProfile, processList):
 	if os.path.isfile(MALHUNTHOME + "/" + os.path.basename(filename) + '.malware_search'):
-		with open(MALHUNTHOME + "/" + os.path.basename(filename) + '.malware_search','r') as f:
-                        volOutput = f.read()
+		with open(MALHUNTHOME + "/" + os.path.basename(filename) + '.malware_search', 'r') as f:
+			volOutput = f.read()
 	else:
- 		volOutput = os.popen(VOLATILITYBIN + " -f " + filename +  " yarascan --profile=" + volProfile + " -y " + os.path.expanduser("~/.malhunt") +  "/malware_rules.yar  2>/dev/null").read()
+		volOutput = os.popen(VOLATILITYBIN + " -f " + filename + " yarascan --profile=" + volProfile + " -y " + os.path.expanduser("~/.malhunt") + "/malware_rules.yar  2>/dev/null").read()
 	#report = []
 	linereport = ""
 	rule = ""
@@ -130,13 +130,13 @@ def yarascan(filename, volProfile, processList):
 		if line.startswith("Rule"):
 			rule = line.split(":")[1].lstrip().rstrip()
 		if line.startswith("Owner"):
-                        process = line.split(":")[1].lstrip().split()[1].lstrip().rstrip()
-                        pid = line.split(":")[1].lstrip().split()[3].lstrip().rstrip()
-			singleProcess = SProcess(rule,process,pid)
+			process = line.split(":")[1].lstrip().split()[1].lstrip().rstrip()
+			pid = line.split(":")[1].lstrip().split()[3].lstrip().rstrip()
+			singleProcess = SProcess(rule, process, pid)
 
 			if check_exclusions(rule):
-				if len(filter(lambda SProcess: SProcess.pid == pid, processList)) ==0:
-				#if singleProcess not in report:
+				if len([SProcess for SProcess in processList if SProcess.pid == pid]) == 0:
+					#if singleProcess not in report:
 					processList.append(singleProcess)
 			rule = ""
 			process = ""
@@ -146,25 +146,25 @@ def yarascan(filename, volProfile, processList):
 	return processList
 
 def malfindscan(filename, volProfile, processList):
-        if os.path.isfile(MALHUNTHOME + "/" + os.path.basename(filename) + '.malfind_search'):
-                with open(MALHUNTHOME + "/" + os.path.basename(filename) + '.malfind_search','r') as f:
-                        volOutput = f.read()
-        else:
-                volOutput = os.popen(VOLATILITYBIN + " -f " + filename +  " malfind --profile=" + volProfile + "  2>/dev/null | grep \"Process: \"" ).read()
-        linereport = ""
-        rule = ""
-        process = ""
-        pid = ""
-        for line in volOutput.splitlines():
-		rule =  "malfind"
+	if os.path.isfile(MALHUNTHOME + "/" + os.path.basename(filename) + '.malfind_search'):
+		with open(MALHUNTHOME + "/" + os.path.basename(filename) + '.malfind_search', 'r') as f:
+			volOutput = f.read()
+	else:
+		volOutput = os.popen(VOLATILITYBIN + " -f " + filename + " malfind --profile=" + volProfile + "  2>/dev/null | grep \"Process: \"" ).read()
+	linereport = ""
+	rule = ""
+	process = ""
+	pid = ""
+	for line in volOutput.splitlines():
+		rule = "malfind"
 		process = line.split(" ")[1].lstrip().rstrip()
 		pid = line.split(" ")[3].lstrip().rstrip()
-		singleProcess = SProcess(rule,process,pid)
-		if len(filter(lambda SProcess: SProcess.pid == pid, processList)) ==0:
+		singleProcess = SProcess(rule, process, pid)
+		if len([SProcess for SProcess in processList if SProcess.pid == pid]) == 0:
 			processList.append(singleProcess)
-        with open(MALHUNTHOME + "/" + os.path.basename(filename) + '.malfind_search', 'w') as f:
-                f.write(volOutput)
-        return processList
+	with open(MALHUNTHOME + "/" + os.path.basename(filename) + '.malfind_search', 'w') as f:
+		f.write(volOutput)
+	return processList
 
 def networkscan(filename, volProfile, processList):
 
@@ -178,25 +178,25 @@ def networkscan(filename, volProfile, processList):
 		volFilter = ""
 		ipColumn = 2
 		pidColumn = 3
-        if os.path.isfile(MALHUNTHOME + "/" + os.path.basename(filename) + '.network_search'):
-                with open(MALHUNTHOME + "/" + os.path.basename(filename) + '.network_search','r') as f:
-                        volOutput = f.read()
-        else:
-                volOutput = os.popen(VOLATILITYBIN + " -f " + filename +  " " + volCommand + " --profile=" + volProfile + "  2>/dev/null " + volFilter ).read()
-        for line in volOutput.splitlines():
-                rule =  "network"
-                process = "N.A."
+	if os.path.isfile(MALHUNTHOME + "/" + os.path.basename(filename) + '.network_search'):
+		with open(MALHUNTHOME + "/" + os.path.basename(filename) + '.network_search', 'r') as f:
+			volOutput = f.read()
+	else:
+		volOutput = os.popen(VOLATILITYBIN + " -f " + filename + " " + volCommand + " --profile=" + volProfile + "  2>/dev/null " + volFilter).read()
+	for line in volOutput.splitlines():
+		rule = "network"
+		process = "N.A."
 		ip = line.split()[ipColumn].lstrip().rstrip()
-                pid = line.split()[pidColumn].lstrip().rstrip()
-		if (ip ==""):
+		pid = line.split()[pidColumn].lstrip().rstrip()
+		if (ip == ""):
 			continue
 		if (maliciousIP(ip.split(":")[0].lstrip().rstrip())):
-	                singleProcess = SProcess(rule,process,pid)
-        	        if len(filter(lambda SProcess: SProcess.pid == pid, processList)) ==0:
-                	        processList.append(singleProcess)
-        with open(MALHUNTHOME + "/" + os.path.basename(filename) + '.network_search', 'w') as f:
-                f.write(volOutput)
-        return processList
+			singleProcess = SProcess(rule, process, pid)
+			if len([SProcess for SProcess in processList if SProcess.pid == pid]) == 0:
+				processList.append(singleProcess)
+	with open(MALHUNTHOME + "/" + os.path.basename(filename) + '.network_search', 'w') as f:
+		f.write(volOutput)
+	return processList
 
 
 
@@ -222,7 +222,7 @@ def clamscan_artifact(imagefile, artifactfile):
 
 
 def banner_logo():
-	print """  __  __       _ _                 _   
+	print("""  __  __       _ _                 _   
  |  \/  |     | | |               | |  
  | \  / | __ _| | |__  _   _ _ __ | |_ 
  | |\/| |/ _` | | '_ \| | | | '_ \| __|
@@ -234,11 +234,11 @@ Hunt malware with Volatility!
 Andrea Fortuna
 andrea@andreafortuna.org
 https://andreafortuna.org
-"""
+""")
 
 def banner_usage():
-	print " Usage:"
-	print "	" + sys.argv[0] + " imagefile"
+	print(" Usage:")
+	print("	" + sys.argv[0] + " imagefile")
 
 def check_env():
 	if  not os.path.exists(MALHUNTHOME):
@@ -247,28 +247,28 @@ def check_env():
 def main():
 	banner_logo()
 	check_env()
-	if len(sys.argv) <2:
+	if len(sys.argv) < 2:
 		banner_usage()
 		return ""
 	imageFile = sys.argv[1]
 	clean_up()
 	if CLAMSCANBIN == "":
-		print ("\033[41mClamscan not installed...\033[0m")
+		print("\033[41mClamscan not installed...\033[0m")
 	if not os.path.isfile(MALHUNTHOME + '/malware_rules.yar'):
-		print "\033[1m* \033[0mUpdate malware yara rules..."
+		print("\033[1m* \033[0mUpdate malware yara rules...")
 		get_rules_from_git()
 		all_yara_files = list_yara_files()
 		all_yara_filtered_1 = remove_incompatible_imports(all_yara_files)
 		all_yara_filtered_2 = fix_duplicated_rules(all_yara_filtered_1)
 		merge_rules(all_yara_filtered_2)
 	else:
-		print "\033[1m* \033[0mUsing cached yara rules..."
-	print "\033[1m** \033[0mStarting image identification for file \033[4m" + imageFile + "\033[0m..."
+		print("\033[1m* \033[0mUsing cached yara rules...")
+	print("\033[1m** \033[0mStarting image identification for file \033[4m" + imageFile + "\033[0m...")
 	volProfile = image_identification(imageFile)
-	if (volProfile ==""):
-		print "Image identification failed!"
+	if (volProfile == ""):
+		print("Image identification failed!")
 		return ""
-	print "Image \033[4m" + imageFile + "\033[0m identified as \033[1m" + volProfile + "\033[0m"
+	print("Image \033[4m" + imageFile + "\033[0m identified as \033[1m" + volProfile + "\033[0m")
 
 	scanresult = []
 
@@ -280,37 +280,37 @@ def main():
 	sys.stdout.write("Malfind...")
 	sys.stdout.flush()
 	scanresult = malfindscan(imageFile, volProfile, scanresult)
-        sys.stdout.write("Network...")
-        sys.stdout.flush()
-        scanresult = networkscan(imageFile, volProfile, scanresult)
+	sys.stdout.write("Network...")
+	sys.stdout.flush()
+	scanresult = networkscan(imageFile, volProfile, scanresult)
 	sys.stdout.write("Done!\n")
 	sys.stdout.flush()
 
 	if (len(scanresult) > 0):
-		print "\033[41m**** Suspicious processes ****\033[0m"
+		print("\033[41m**** Suspicious processes ****\033[0m")
 		for singleProcess in scanresult:
 			sys.stdout.write("\t \033[1m" + singleProcess.rule + "\033[0m: \033[4m" + singleProcess.process + "\033[0m (" + singleProcess.pid + ")\n")
 			sys.stdout.flush()
 			sys.stdout.write('\t\tSaving process memory and handles...')
 			sys.stdout.flush()
-			artifactFile = dump_process(imageFile,volProfile,singleProcess.pid)
+			artifactFile = dump_process(imageFile, volProfile, singleProcess.pid)
 			if (artifactFile != ""):
-				print "done!"
+				print("done!")
 			else:
-				print ("\x1b[6;30;42mNo file!\x1b[6;30;0m")
+				print("\x1b[6;30;42mNo file!\x1b[6;30;0m")
 				continue
 			sys.stdout.write('\t\tScanning artifact with ClamScan...')
 			sys.stdout.flush()
-			clamscanOutput = clamscan_artifact(imageFile,artifactFile)
+			clamscanOutput = clamscan_artifact(imageFile, artifactFile)
 			if (clamscanOutput != "OK"):
-				print ("\033[41m" + clamscanOutput + "\033[0m")
+				print(("\033[41m" + clamscanOutput + "\033[0m"))
 			else:
-				print ("\x1b[6;30;42mOK\x1b[6;30;0m")
-		print "\nArtifacts saved into " + os.getcwd() + "/" + os.path.basename(imageFile) + "_artifacts/"
+				print("\x1b[6;30;42mOK\x1b[6;30;0m")
+		print("\nArtifacts saved into " + os.getcwd() + "/" + os.path.basename(imageFile) + "_artifacts/")
 	else:
-		print "\033[92mNo artifacts found!\033[0m"
+		print("\033[92mNo artifacts found!\033[0m")
 
-	print "Full scan results saved in \033[4m" + MALHUNTHOME + "/"  + os.path.basename(imageFile) + ".malware_search\033[0m"
+	print("Full scan results saved in \033[4m" + MALHUNTHOME + "/" + os.path.basename(imageFile) + ".malware_search\033[0m")
 
 # Main body
 if __name__ == '__main__':
