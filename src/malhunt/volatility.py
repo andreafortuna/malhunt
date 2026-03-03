@@ -37,6 +37,7 @@ class VolatilityError(Exception):
 class VolatilityConfig:
     """Configuration for Volatility execution."""
     timeout: int = 300  # 5 minutes default
+    yara_timeout: int = 900  # 15 minutes default for windows.vadyarascan
     retry_count: int = 1
     retry_delay: float = 1.0
     cache_results: bool = True
@@ -121,6 +122,7 @@ class VolatilityWrapper:
         *args: str,
         use_cache: bool = True,
         output_dir: Optional[Path] = None,
+        timeout: Optional[int] = None,
     ) -> Tuple[str, str]:
         """Run a volatility command with retry and caching.
         
@@ -150,6 +152,7 @@ class VolatilityWrapper:
             dirs = os.pathsep.join(str(p) for p in self.config.symbol_dirs)
             cmd.append(f"--symbol-dirs={dirs}")
         cmd += list(args)
+        command_timeout = timeout if timeout is not None else self.config.timeout
         
         last_error = None
         
@@ -163,7 +166,7 @@ class VolatilityWrapper:
                     cmd,
                     capture_output=True,
                     text=True,
-                    timeout=self.config.timeout
+                    timeout=command_timeout
                 )
                 
                 if result.returncode != 0:
@@ -199,7 +202,7 @@ class VolatilityWrapper:
             
             except subprocess.TimeoutExpired as e:
                 last_error = VolatilityError(
-                    f"Volatility command timed out after {self.config.timeout}s: {args[0]}"
+                    f"Volatility command timed out after {command_timeout}s: {args[0]}"
                 )
                 logger.warning(f"Timeout on attempt {attempt + 1}")
                 
@@ -603,13 +606,27 @@ class VolatilityWrapper:
 
         attempt_file = rule_file
         max_syntax_retries = 50
+        yara_timeout = max(self.config.timeout, self.config.yara_timeout)
         for attempt in range(max_syntax_retries):
             try:
-                stdout, _ = self._run_command("windows.vadyarascan", f"--yara-file={attempt_file}")
+                stdout, _ = self._run_command(
+                    "windows.vadyarascan",
+                    f"--yara-file={attempt_file}",
+                    use_cache=False,
+                    timeout=yara_timeout,
+                )
                 match_count = stdout.count("Rule:")
                 logger.debug(f"YARA scan found {match_count} rule matches")
                 return stdout
             except VolatilityError as error:
+                if "timed out" in str(error).lower() and yara_timeout < 3600:
+                    previous_timeout = yara_timeout
+                    yara_timeout = min(yara_timeout * 2, 3600)
+                    logger.warning(
+                        f"YARA scan timed out after {previous_timeout}s; retrying with {yara_timeout}s timeout"
+                    )
+                    continue
+
                 line_number = self._extract_yara_syntax_error_line(error)
                 if line_number is None:
                     raise

@@ -70,6 +70,7 @@ class Malhunt:
                     merged.append(directory)
             self.vol_cfg = VolatilityConfig(
                 timeout=vol_config.timeout,
+                yara_timeout=vol_config.yara_timeout,
                 retry_count=vol_config.retry_count,
                 retry_delay=vol_config.retry_delay,
                 cache_results=vol_config.cache_results,

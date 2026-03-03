@@ -227,6 +227,48 @@ class TestVolatilityImageInfo:
             assert result["suggested_profiles"] == ["Windows.7SP1x64", "Windows.10x64"]
 
 
+class TestVolatilityYaraTimeout:
+    """Test YARA-specific timeout behavior."""
+
+    @patch.object(VolatilityWrapper, '_run_command')
+    @patch('malhunt.volatility.VolatilityWrapper._find_volatility')
+    def test_yarascan_uses_dedicated_timeout(self, mock_find, mock_run_cmd):
+        mock_find.return_value = Path("/usr/bin/vol")
+        mock_run_cmd.return_value = ("", "")
+
+        import tempfile
+        with tempfile.NamedTemporaryFile() as dump, tempfile.NamedTemporaryFile(suffix=".yar") as rules:
+            config = VolatilityConfig(timeout=300, yara_timeout=1200)
+            wrapper = VolatilityWrapper(Path(dump.name), config)
+
+            wrapper.yarascan(Path(rules.name))
+
+            _, kwargs = mock_run_cmd.call_args
+            assert kwargs.get("timeout") == 1200
+            assert kwargs.get("use_cache") is False
+
+    @patch.object(VolatilityWrapper, '_run_command')
+    @patch('malhunt.volatility.VolatilityWrapper._find_volatility')
+    def test_yarascan_escalates_timeout_after_timeout_error(self, mock_find, mock_run_cmd):
+        mock_find.return_value = Path("/usr/bin/vol")
+        mock_run_cmd.side_effect = [
+            VolatilityError("Volatility command timed out after 900s: windows.vadyarascan"),
+            ("", ""),
+        ]
+
+        import tempfile
+        with tempfile.NamedTemporaryFile() as dump, tempfile.NamedTemporaryFile(suffix=".yar") as rules:
+            config = VolatilityConfig(timeout=300, yara_timeout=900)
+            wrapper = VolatilityWrapper(Path(dump.name), config)
+
+            wrapper.yarascan(Path(rules.name))
+
+            first_call = mock_run_cmd.call_args_list[0]
+            second_call = mock_run_cmd.call_args_list[1]
+            assert first_call.kwargs.get("timeout") == 900
+            assert second_call.kwargs.get("timeout") == 1800
+
+
 class TestVolatilityCache:
     """Test caching functionality."""
     
