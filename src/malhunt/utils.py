@@ -63,7 +63,8 @@ def remove_incompatible_imports(files: list[Path]) -> list[Path]:
         'import "math"',
         'import "cuckoo"',
         'import "hash"',
-        'imphash'
+        'imphash',
+        'pe.number_of_signatures',
     ]
     
     filtered = []
@@ -93,6 +94,7 @@ def sanitize_yara_rules_file(source: Path, destination: Path) -> int:
         'import "cuckoo"',
         'import "hash"',
         'imphash',
+        'pe.number_of_signatures',
     ]
 
     content = source.read_text(errors="ignore")
@@ -105,7 +107,7 @@ def sanitize_yara_rules_file(source: Path, destination: Path) -> int:
     brace_depth = 0
     removed_rules = 0
 
-    rule_start = re.compile(r"^\s*(?:(?:private|global)\s+)*rule\s+[A-Za-z0-9_]+\b")
+    rule_start = re.compile(r"^\s*(?:(?:private|global)\s+)*rule\b")
 
     def flush_rule_block() -> None:
         nonlocal in_rule, seen_open_brace, brace_depth, rule_buffer, removed_rules
@@ -192,6 +194,120 @@ def sanitize_yara_rules_file(source: Path, destination: Path) -> int:
 
     destination.write_text(sanitized_content)
     return removed_rules
+
+
+def validate_and_prune_yara_rules_file(source: Path, destination: Path, max_iterations: int = 2000) -> int:
+    """Validate a YARA file by compiling it and pruning failing rule blocks.
+
+    Args:
+        source: Input YARA file path
+        destination: Output validated YARA file path
+        max_iterations: Max number of pruning passes
+
+    Returns:
+        Number of removed blocks/lines required to reach a compilable file
+    """
+    try:
+        import yara  # type: ignore
+    except Exception as exc:
+        logger.warning(f"yara-python unavailable for validation, skipping parse pass: {exc}")
+        shutil.copyfile(source, destination)
+        return 0
+
+    lines = source.read_text(errors="ignore").splitlines(keepends=True)
+    removed = 0
+
+    for _ in range(max_iterations):
+        if not lines:
+            break
+
+        candidate = "".join(lines)
+        try:
+            yara.compile(source=candidate)
+            destination.write_text(candidate)
+            return removed
+        except Exception as exc:
+            message = str(exc)
+            line_match = re.search(r"line\s*(\d+)", message, flags=re.IGNORECASE)
+
+            if not line_match:
+                logger.warning(f"Unable to map YARA compile error to line, stopping parse pass: {message}")
+                break
+
+            try:
+                line_number = int(line_match.group(1))
+            except ValueError:
+                logger.warning(f"Invalid YARA compile error line, stopping parse pass: {message}")
+                break
+
+            index = max(0, min(len(lines) - 1, line_number - 1))
+            bounds = _find_yara_block_bounds(lines, index)
+            if bounds is None:
+                del lines[index]
+                removed += 1
+                continue
+
+            start, end = bounds
+            del lines[start : end + 1]
+            removed += 1
+
+    if lines:
+        destination.write_text("".join(lines))
+    else:
+        destination.write_text("")
+
+    if removed >= max_iterations:
+        logger.warning("YARA parse pass hit max iterations before reaching a clean compile")
+
+    return removed
+
+
+def _find_yara_block_bounds(lines: list[str], index: int) -> Optional[tuple[int, int]]:
+    """Find bounds of a rule/orphan block around a 0-based line index."""
+    rule_start = re.compile(r"^\s*(?:(?:private|global)\s+)*rule\b")
+
+    for i in range(index, -1, -1):
+        if not rule_start.match(lines[i]):
+            continue
+
+        depth = 0
+        seen_open = False
+        end = i
+        for j in range(i, len(lines)):
+            depth += lines[j].count("{") - lines[j].count("}")
+            if "{" in lines[j]:
+                seen_open = True
+            end = j
+            if seen_open and depth <= 0:
+                break
+
+        if i <= index <= end:
+            return (i, end)
+
+        if seen_open and depth <= 0 and end < index:
+            break
+
+        if i <= index and (not seen_open or depth > 0):
+            for j in range(i + 1, len(lines)):
+                if rule_start.match(lines[j]):
+                    return (i, j - 1)
+            return (i, len(lines) - 1)
+
+    orphan_start = index
+    while orphan_start > 0 and lines[orphan_start - 1].strip() != "}":
+        orphan_start -= 1
+
+    orphan_end = index
+    while orphan_end < len(lines) and lines[orphan_end].strip() != "}":
+        orphan_end += 1
+    if orphan_end >= len(lines):
+        orphan_end = len(lines) - 1
+
+    chunk = "".join(lines[orphan_start : orphan_end + 1]).lower()
+    if not any(token in chunk for token in ("rule ", "meta:", "strings:", "condition:", "$")):
+        return None
+
+    return (orphan_start, orphan_end)
 
 
 def fix_duplicated_rules(content: str) -> str:

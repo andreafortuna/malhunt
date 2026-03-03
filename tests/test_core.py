@@ -8,7 +8,8 @@ from unittest.mock import Mock, patch, MagicMock
 from malhunt.models import SuspiciousProcess
 from malhunt.utils import (
     check_exclusions, remove_incompatible_imports,
-    fix_duplicated_rules, banner_logo, sanitize_yara_rules_file
+    fix_duplicated_rules, banner_logo, sanitize_yara_rules_file,
+    validate_and_prune_yara_rules_file
 )
 from malhunt.volatility import VolatilityConfig, VolatilityError
 
@@ -288,6 +289,78 @@ class TestRemoveIncompatibleImports:
             assert "DropMe" not in content
             assert "KeepMe" in content
             assert 'import "hash"' not in content
+
+    def test_sanitize_yara_rules_file_removes_unsupported_pe_signature_fields(self):
+        """Sanitizer should drop rules using unsupported pe.number_of_signatures field."""
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = root / "in.yar"
+            dest = root / "out.yar"
+
+            source.write_text(
+                'rule KeepMe { condition: true }\n'
+                'rule DropMe {\n'
+                '  condition:\n'
+                '    for any i in (0..pe.number_of_signatures) : (pe.signatures[i].subject contains "x")\n'
+                '}\n'
+            )
+
+            removed = sanitize_yara_rules_file(source, dest)
+
+            content = dest.read_text()
+            assert removed >= 1
+            assert "DropMe" not in content
+            assert "KeepMe" in content
+
+    def test_validate_and_prune_yara_rules_file_removes_malformed_orphan_block(self):
+        """Compile-time parser should drop orphan malformed fragments."""
+        pytest.importorskip("yara")
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = root / "in.yar"
+            dest = root / "out.yar"
+
+            source.write_text(
+                'rule KeepA { condition: true }\n'
+                '  strings:\n'
+                '    $a = "bad"\n'
+                '  condition:\n'
+                '    true\n'
+                '}\n'
+                'rule KeepB { condition: true }\n'
+            )
+
+            removed = validate_and_prune_yara_rules_file(source, dest)
+
+            content = dest.read_text()
+            assert removed >= 1
+            assert "$a = \"bad\"" not in content
+            assert "rule KeepB" in content
+
+    def test_validate_and_prune_yara_rules_file_removes_unsupported_hash_usage(self):
+        """Compile-time parser should remove rules using unavailable hash module symbols."""
+        pytest.importorskip("yara")
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = root / "in.yar"
+            dest = root / "out.yar"
+
+            source.write_text(
+                'rule KeepMe { condition: true }\n'
+                'rule DropHash {\n'
+                '  condition:\n'
+                '    hash.md5(0, filesize) == "d41d8cd98f00b204e9800998ecf8427e"\n'
+                '}\n'
+            )
+
+            removed = validate_and_prune_yara_rules_file(source, dest)
+
+            content = dest.read_text()
+            assert removed >= 1
+            assert "DropHash" not in content
+            assert "KeepMe" in content
 
 
 class TestVolatilityConfig:

@@ -116,7 +116,12 @@ class VolatilityWrapper:
         
         return None
     
-    def _run_command(self, *args: str, use_cache: bool = True) -> Tuple[str, str]:
+    def _run_command(
+        self,
+        *args: str,
+        use_cache: bool = True,
+        output_dir: Optional[Path] = None,
+    ) -> Tuple[str, str]:
         """Run a volatility command with retry and caching.
         
         Args:
@@ -129,7 +134,8 @@ class VolatilityWrapper:
         Raises:
             VolatilityError: If command fails after retries
         """
-        cache_key = " ".join(args)
+        output_dir_token = str(output_dir) if output_dir else ""
+        cache_key = " ".join(args) + f"|out={output_dir_token}"
         
         # Check cache
         if use_cache and cache_key in self._cache:
@@ -137,6 +143,8 @@ class VolatilityWrapper:
             return self._cache[cache_key], ""
         
         cmd = [str(self._volatility_bin), "-f", str(self.dump_path)]
+        if output_dir:
+            cmd += ["-o", str(output_dir)]
         # include symbol directories if configured
         if self.config.symbol_dirs:
             dirs = os.pathsep.join(str(p) for p in self.config.symbol_dirs)
@@ -594,7 +602,8 @@ class VolatilityWrapper:
         logger.info(f"Running YARA scan with {rule_file.name}")
 
         attempt_file = rule_file
-        for attempt in range(5):
+        max_syntax_retries = 50
+        for attempt in range(max_syntax_retries):
             try:
                 stdout, _ = self._run_command("windows.vadyarascan", f"--yara-file={attempt_file}")
                 match_count = stdout.count("Rule:")
@@ -639,34 +648,79 @@ class VolatilityWrapper:
             return False
 
         index = max(0, min(len(lines) - 1, line_number - 1))
-        rule_start = re.compile(r"^\s*(?:(?:private|global)\s+)*rule\s+[A-Za-z0-9_]+\b")
-
-        start = None
-        for i in range(index, -1, -1):
-            if rule_start.match(lines[i]):
-                start = i
-                break
-
-        if start is None:
-            # fallback: drop the offending line only
+        bounds = VolatilityWrapper._find_yara_block_bounds(lines, index)
+        if bounds is None:
+            # last-resort fallback: drop only the offending line
             trimmed = lines[:index] + lines[index + 1 :]
             destination.write_text("".join(trimmed))
             return True
 
-        depth = 0
-        seen_open = False
-        end = start
-        for j in range(start, len(lines)):
-            depth += lines[j].count("{") - lines[j].count("}")
-            if "{" in lines[j]:
-                seen_open = True
-            end = j
-            if seen_open and depth <= 0:
-                break
-
+        start, end = bounds
         trimmed = lines[:start] + lines[end + 1 :]
         destination.write_text("".join(trimmed))
         return True
+
+    @staticmethod
+    def _find_yara_block_bounds(lines: List[str], index: int) -> Optional[Tuple[int, int]]:
+        """Find the most likely malformed block around an error line.
+
+        First tries to remove a full `rule ... { ... }` block.
+        If no rule header is found, falls back to removing an orphan block
+        bounded by surrounding closing braces.
+        """
+        rule_start = re.compile(r"^\s*(?:(?:private|global)\s+)*rule\b")
+
+        start: Optional[int] = None
+        for i in range(index, -1, -1):
+            if not rule_start.match(lines[i]):
+                continue
+
+            candidate_start = i
+            depth = 0
+            seen_open = False
+            candidate_end = candidate_start
+            for j in range(candidate_start, len(lines)):
+                depth += lines[j].count("{") - lines[j].count("}")
+                if "{" in lines[j]:
+                    seen_open = True
+                candidate_end = j
+                if seen_open and depth <= 0:
+                    break
+
+            # Only treat as the target rule if error line is within candidate block
+            if candidate_start <= index <= candidate_end:
+                start = candidate_start
+                end = candidate_end
+                return (start, end)
+
+            # If candidate already closed before index, the error is outside that rule.
+            if seen_open and depth <= 0 and candidate_end < index:
+                break
+
+            # Rule appears malformed and may never close: if it starts before index,
+            # remove it to recover parsing.
+            if candidate_start <= index and (not seen_open or depth > 0):
+                for j in range(candidate_start + 1, len(lines)):
+                    if rule_start.match(lines[j]):
+                        return (candidate_start, j - 1)
+                return (candidate_start, len(lines) - 1)
+
+        # Orphan fallback: remove the nearest standalone block between `}` delimiters
+        orphan_start = index
+        while orphan_start > 0 and lines[orphan_start - 1].strip() != "}":
+            orphan_start -= 1
+
+        orphan_end = index
+        while orphan_end < len(lines) and lines[orphan_end].strip() != "}":
+            orphan_end += 1
+        if orphan_end >= len(lines):
+            orphan_end = len(lines) - 1
+
+        chunk = "".join(lines[orphan_start : orphan_end + 1]).lower()
+        if not any(token in chunk for token in ("rule ", "meta:", "strings:", "condition:", "$")):
+            return None
+
+        return (orphan_start, orphan_end)
     
     def malfind(self) -> str:
         """Scan for suspicious injected code.
@@ -736,11 +790,27 @@ class VolatilityWrapper:
         output_dir.mkdir(parents=True, exist_ok=True)
         
         logger.info(f"Dumping process {pid}...")
-        stdout, _ = self._run_command(
-            "windows.procdump",
-            f"--pid={pid}",
-            f"--dump-dir={output_dir}"
-        )
+        before_files = {p.resolve() for p in output_dir.glob("*") if p.is_file()}
+
+        try:
+            stdout, _ = self._run_command(
+                "windows.dumpfiles",
+                f"--pid={pid}",
+                use_cache=False,
+                output_dir=output_dir,
+            )
+        except VolatilityError as error:
+            details = "\n".join([str(error), error.stdout or "", error.stderr or ""]).lower()
+            if "invalid choice windows.dumpfiles" not in details:
+                raise
+
+            logger.warning("windows.dumpfiles unavailable, falling back to windows.procdump")
+            stdout, _ = self._run_command(
+                "windows.procdump",
+                f"--pid={pid}",
+                f"--dump-dir={output_dir}",
+                use_cache=False,
+            )
         
         # Parse output to find the dumped file
         # Vol3 output typically contains the saved filename
@@ -757,6 +827,12 @@ class VolatilityWrapper:
                             if dump_file.exists():
                                 logger.success(f"Dumped to {dump_file}")
                                 return dump_file
+
+        after_files = [p for p in output_dir.glob("*") if p.is_file() and p.resolve() not in before_files]
+        if after_files:
+            newest = max(after_files, key=lambda p: p.stat().st_mtime)
+            logger.success(f"Dumped to {newest}")
+            return newest
         
         logger.warning(f"Could not locate dumped file for PID {pid}")
         return None

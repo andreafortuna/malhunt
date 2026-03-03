@@ -261,6 +261,64 @@ class TestVolatilityCache:
             assert stats["memory_bytes"] > 0
 
 
+class TestYaraRecoveryHelpers:
+    """Test helpers used for syntax-error recovery in YARA scans."""
+
+    def test_drop_rule_block_with_loose_rule_header(self, tmp_path):
+        source = tmp_path / "rules.yar"
+        dest = tmp_path / "rules.fixed.yar"
+
+        source.write_text(
+            'global rule Good : TAG {\n'
+            '  condition:\n'
+            '    true\n'
+            '}\n'
+            'rule Bad : FILE {\n'
+            '  strings:\n'
+            '    $a = "x"\n'
+            '  condition:\n'
+            '    true\n'
+            '}\n'
+        )
+
+        removed = VolatilityWrapper._drop_rule_block_at_line(source, dest, 6)
+
+        assert removed is True
+        content = dest.read_text()
+        assert "rule Bad" not in content
+        assert "rule Good" in content
+
+    def test_drop_orphan_block_when_rule_header_missing(self, tmp_path):
+        source = tmp_path / "rules.yar"
+        dest = tmp_path / "rules.fixed.yar"
+
+        source.write_text(
+            'rule Good {\n'
+            '  condition:\n'
+            '    true\n'
+            '}\n'
+            '\n'
+            '  strings:\n'
+            '    $a = "oops"\n'
+            '  condition:\n'
+            '    true\n'
+            '}\n'
+            '\n'
+            'rule Tail {\n'
+            '  condition:\n'
+            '    true\n'
+            '}\n'
+        )
+
+        removed = VolatilityWrapper._drop_rule_block_at_line(source, dest, 7)
+
+        assert removed is True
+        content = dest.read_text()
+        assert '$a = "oops"' not in content
+        assert "rule Good" in content
+        assert "rule Tail" in content
+
+
 class TestVolatilitySymbolDiagnostics:
     """Test symbol diagnostics extraction helpers."""
 

@@ -11,7 +11,7 @@ from .models import SuspiciousProcess
 from .scanner import MalfindScanner, NetworkScanner, YaraScanner
 from .utils import (
     banner_logo, clean_up, get_malhunt_home,
-    sanitize_yara_rules_file
+    sanitize_yara_rules_file, validate_and_prune_yara_rules_file
 )
 from .volatility import VolatilityWrapper, VolatilityConfig, VolatilityError
 
@@ -114,9 +114,14 @@ class Malhunt:
         if self.rules_file.exists():
             sanitized_tmp = self.rules_file.with_suffix(self.rules_file.suffix + ".tmp")
             removed_rules = sanitize_yara_rules_file(self.rules_file, sanitized_tmp)
-            sanitized_tmp.replace(self.rules_file)
-            if removed_rules:
-                logger.warning(f"Removed {removed_rules} incompatible YARA rules from cache")
+            parsed_tmp = self.rules_file.with_suffix(self.rules_file.suffix + ".parsed")
+            removed_parse = validate_and_prune_yara_rules_file(sanitized_tmp, parsed_tmp)
+            parsed_tmp.replace(self.rules_file)
+            if sanitized_tmp.exists():
+                sanitized_tmp.unlink(missing_ok=True)
+            total_removed = removed_rules + removed_parse
+            if total_removed:
+                logger.warning(f"Removed {total_removed} incompatible YARA rules from cache")
             file_age = self.rules_file.stat().st_mtime
             age_days = (time.time() - file_age) / (60 * 60 * 24)
             logger.info(f"Using cached YARA rules ({age_days:.1f} days old)")
@@ -145,9 +150,14 @@ class Malhunt:
                 return False
 
             logger.info("Processing downloaded YARA rules...")
-            removed_rules = sanitize_yara_rules_file(extracted_path, self.rules_file)
-            if removed_rules:
-                logger.warning(f"Removed {removed_rules} incompatible YARA rules")
+            sanitized_tmp = self.rules_file.with_suffix(self.rules_file.suffix + ".tmp")
+            removed_rules = sanitize_yara_rules_file(extracted_path, sanitized_tmp)
+            removed_parse = validate_and_prune_yara_rules_file(sanitized_tmp, self.rules_file)
+            if sanitized_tmp.exists():
+                sanitized_tmp.unlink(missing_ok=True)
+            total_removed = removed_rules + removed_parse
+            if total_removed:
+                logger.warning(f"Removed {total_removed} incompatible YARA rules")
             logger.success(f"YARA rules prepared: {self.rules_file}")
             return True
         except Exception as e:
@@ -164,9 +174,14 @@ class Malhunt:
         if self.rules_file.exists():
             sanitized_tmp = self.rules_file.with_suffix(self.rules_file.suffix + ".tmp")
             removed_rules = sanitize_yara_rules_file(self.rules_file, sanitized_tmp)
-            sanitized_tmp.replace(self.rules_file)
-            if removed_rules:
-                logger.warning(f"Removed {removed_rules} incompatible YARA rules from cache")
+            parsed_tmp = self.rules_file.with_suffix(self.rules_file.suffix + ".parsed")
+            removed_parse = validate_and_prune_yara_rules_file(sanitized_tmp, parsed_tmp)
+            parsed_tmp.replace(self.rules_file)
+            if sanitized_tmp.exists():
+                sanitized_tmp.unlink(missing_ok=True)
+            total_removed = removed_rules + removed_parse
+            if total_removed:
+                logger.warning(f"Removed {total_removed} incompatible YARA rules from cache")
             file_age = self.rules_file.stat().st_mtime
             age_days = (time.time() - file_age) / (60 * 60 * 24)
             logger.info(f"Using cached YARA rules ({age_days:.1f} days old)")
@@ -195,9 +210,14 @@ class Malhunt:
                     yara_ok = False
                 else:
                     logger.info("Processing downloaded YARA rules...")
-                    removed_rules = sanitize_yara_rules_file(extracted_path, self.rules_file)
-                    if removed_rules:
-                        logger.warning(f"Removed {removed_rules} incompatible YARA rules")
+                    sanitized_tmp = self.rules_file.with_suffix(self.rules_file.suffix + ".tmp")
+                    removed_rules = sanitize_yara_rules_file(extracted_path, sanitized_tmp)
+                    removed_parse = validate_and_prune_yara_rules_file(sanitized_tmp, self.rules_file)
+                    if sanitized_tmp.exists():
+                        sanitized_tmp.unlink(missing_ok=True)
+                    total_removed = removed_rules + removed_parse
+                    if total_removed:
+                        logger.warning(f"Removed {total_removed} incompatible YARA rules")
                     logger.success(f"YARA rules prepared: {self.rules_file}")
                     yara_ok = True
             except Exception as e:
