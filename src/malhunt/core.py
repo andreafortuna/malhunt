@@ -32,7 +32,7 @@ class Malhunt:
     
     def __init__(self, dump_path: Path, rules_file: Optional[Path] = None,
                  vol_config: Optional[VolatilityConfig] = None,
-                 auto_symbols: bool = False):
+                 auto_symbols: bool = True):
         """Initialize Malhunt.
         
         Args:
@@ -279,6 +279,7 @@ class Malhunt:
                         logger.error(f"Symbol recovery did not resolve issue: {retry_error}")
 
             diagnostics = self.vol.get_symbol_diagnostics(error)
+            diagnostics = self.vol.enrich_symbol_diagnostics(diagnostics)
             missing_symbols = diagnostics.get("missing_symbols", [])
             requirements = diagnostics.get("requirements", [])
 
@@ -294,11 +295,20 @@ class Malhunt:
                         f"({item.get('filename')})"
                     )
                     logger.error(f"    Source URL: {item.get('url')}")
+                    if item.get("is_locally_available"):
+                        logger.error(f"    Local files: {', '.join(item.get('local_files', []))}")
+                    else:
+                        logger.error(f"    Local path: {item.get('local_dir')} (missing)")
             else:
                 logger.error(
                     "  No symbol-server URL found in Volatility output. "
                     "Check image type, plugin compatibility, and symbol dirs."
                 )
+
+            helper_script = diagnostics.get("helper_script")
+            if helper_script:
+                logger.error(f"  Helper script generated: {helper_script}")
+                logger.error(f"  Run: {helper_script}")
 
             if not self.auto_symbols:
                 logger.error("  Tip: rerun with --auto-symbols to attempt best-effort recovery")

@@ -247,6 +247,52 @@ class VolatilityWrapper:
             return url[:-1] + "_"
         return None
 
+    @staticmethod
+    def _scheme_variants(url: str) -> List[str]:
+        variants = [url]
+        if url.startswith("http://"):
+            variants.append("https://" + url[len("http://"):])
+        elif url.startswith("https://"):
+            variants.append("http://" + url[len("https://"):])
+        seen = []
+        for item in variants:
+            if item not in seen:
+                seen.append(item)
+        return seen
+
+    @staticmethod
+    def _get_windows_symbol_root(symbol_dirs: Optional[List[Path]]) -> Path:
+        for directory in symbol_dirs or []:
+            directory = Path(directory)
+            if directory.name == "windows":
+                return directory
+        return Path.home() / ".malhunt" / "symbols" / "windows"
+
+    def _build_symbol_download_candidates(self, url: str) -> List[str]:
+        candidates = []
+        for scheme_url in self._scheme_variants(url):
+            candidates.append(scheme_url)
+            alt = self._alternate_symbol_url(scheme_url)
+            if alt:
+                candidates.append(alt)
+
+        seen = []
+        for candidate in candidates:
+            if candidate not in seen:
+                seen.append(candidate)
+        return seen
+
+    @staticmethod
+    def _extract_symbol_parts(url: str) -> Optional[Dict[str, str]]:
+        parts = [p for p in url.split("/") if p]
+        if len(parts) < 3:
+            return None
+        return {
+            "pdb_name": parts[-3],
+            "guidage": parts[-2],
+            "filename": parts[-1],
+        }
+
     def auto_recover_windows_symbols(self, error: VolatilityError) -> bool:
         """Best-effort recovery of missing Windows symbol files.
 
@@ -262,31 +308,20 @@ class VolatilityWrapper:
             logger.warning("No downloadable symbol URLs found in Volatility output")
             return False
 
-        symbol_root = None
-        for directory in self.config.symbol_dirs or []:
-            directory = Path(directory)
-            if directory.name == "windows":
-                symbol_root = directory
-                break
-        if symbol_root is None:
-            base = Path.home() / ".malhunt" / "symbols"
-            symbol_root = base / "windows"
+        symbol_root = self._get_windows_symbol_root(self.config.symbol_dirs)
         symbol_root.mkdir(parents=True, exist_ok=True)
 
         downloaded_any = False
 
         for url in urls:
-            candidates = [url]
-            alternate = self._alternate_symbol_url(url)
-            if alternate and alternate not in candidates:
-                candidates.append(alternate)
+            candidates = self._build_symbol_download_candidates(url)
 
             # Expected layout: .../download/symbols/<pdb_name>/<GUIDAGE>/<filename>
-            parts = [p for p in url.split("/") if p]
-            if len(parts) < 3:
+            symbol_parts = self._extract_symbol_parts(url)
+            if not symbol_parts:
                 continue
-            pdb_name = parts[-3]
-            guidage = parts[-2]
+            pdb_name = symbol_parts["pdb_name"]
+            guidage = symbol_parts["guidage"]
             target_dir = symbol_root / pdb_name / guidage
             target_dir.mkdir(parents=True, exist_ok=True)
 
@@ -300,7 +335,11 @@ class VolatilityWrapper:
 
                 try:
                     logger.info(f"Attempting symbol download: {candidate_url}")
-                    with urllib.request.urlopen(candidate_url, timeout=60) as response:
+                    request = urllib.request.Request(
+                        candidate_url,
+                        headers={"User-Agent": "malhunt/0.4 (+volatility-symbol-helper)"},
+                    )
+                    with urllib.request.urlopen(request, timeout=60) as response:
                         data = response.read()
                     if not data:
                         logger.debug(f"No data returned for {candidate_url}")
@@ -314,6 +353,79 @@ class VolatilityWrapper:
         if not downloaded_any:
             logger.warning("Automatic symbol recovery did not download any files")
         return downloaded_any
+
+    def enrich_symbol_diagnostics(self, diagnostics: Dict[str, Any]) -> Dict[str, Any]:
+        """Enrich diagnostics with local availability and recovery helper path."""
+        missing = diagnostics.get("missing_symbols", [])
+        symbol_root = self._get_windows_symbol_root(self.config.symbol_dirs)
+        symbol_root.mkdir(parents=True, exist_ok=True)
+
+        enriched_missing = []
+        for item in missing:
+            pdb_name = item.get("pdb_name")
+            guidage = item.get("guidage")
+            if not pdb_name or not guidage:
+                enriched_missing.append(item)
+                continue
+
+            local_dir = symbol_root / pdb_name / guidage
+            local_files = []
+            if local_dir.exists():
+                local_files = [str(path) for path in local_dir.iterdir() if path.is_file()]
+
+            item_copy = dict(item)
+            item_copy["local_dir"] = str(local_dir)
+            item_copy["local_files"] = local_files
+            item_copy["is_locally_available"] = bool(local_files)
+            item_copy["candidate_urls"] = self._build_symbol_download_candidates(item.get("url", ""))
+            enriched_missing.append(item_copy)
+
+        diagnostics = dict(diagnostics)
+        diagnostics["missing_symbols"] = enriched_missing
+        diagnostics["symbol_root"] = str(symbol_root)
+
+        helper_path = self.write_symbol_recovery_helper(diagnostics)
+        diagnostics["helper_script"] = str(helper_path)
+        return diagnostics
+
+    def write_symbol_recovery_helper(self, diagnostics: Dict[str, Any]) -> Path:
+        """Write a shell helper script to attempt manual symbol recovery."""
+        symbol_root = Path(diagnostics.get("symbol_root") or self._get_windows_symbol_root(self.config.symbol_dirs))
+        helper_path = symbol_root / "recover_missing_symbols.sh"
+        symbol_root.mkdir(parents=True, exist_ok=True)
+
+        lines = [
+            "#!/usr/bin/env bash",
+            "set -euo pipefail",
+            f'SYMBOL_ROOT="{symbol_root}"',
+            "echo \"Using symbol root: $SYMBOL_ROOT\"",
+            "",
+        ]
+
+        missing = diagnostics.get("missing_symbols", [])
+        if not missing:
+            lines.append("echo \"No missing symbols reported.\"")
+        else:
+            for item in missing:
+                pdb_name = item.get("pdb_name", "unknown.pdb")
+                guidage = item.get("guidage", "unknown")
+                lines.append(f'echo "=== {pdb_name} / {guidage} ==="')
+                lines.append(f'mkdir -p "$SYMBOL_ROOT/{pdb_name}/{guidage}"')
+                for candidate in item.get("candidate_urls", [])[:6]:
+                    filename = candidate.rsplit("/", 1)[-1]
+                    lines.append(
+                        f'curl -fL --retry 2 --connect-timeout 15 "{candidate}" '
+                        f'-o "$SYMBOL_ROOT/{pdb_name}/{guidage}/{filename}" || true'
+                    )
+                lines.append(
+                    f'ls -lah "$SYMBOL_ROOT/{pdb_name}/{guidage}" || true'
+                )
+                lines.append("")
+
+        lines.append('echo "Done. Re-run malhunt after verifying symbol files."')
+        helper_path.write_text("\n".join(lines) + "\n")
+        helper_path.chmod(0o755)
+        return helper_path
 
     def get_symbol_diagnostics(self, error: VolatilityError) -> Dict[str, Any]:
         """Build a human-friendly diagnostics report for symbol failures.

@@ -293,6 +293,39 @@ class TestVolatilitySymbolDiagnostics:
             assert diagnostics["missing_symbols"][0]["pdb_name"] == "ntkrnlmp.pdb"
             assert diagnostics["missing_symbols"][0]["guidage"] == "ABCDEF1234"
 
+    @patch('malhunt.volatility.VolatilityWrapper._find_volatility')
+    def test_enrich_diagnostics_generates_helper_script(self, mock_find, tmp_path):
+        mock_find.return_value = Path("/usr/bin/vol")
+
+        dump = tmp_path / "dump.raw"
+        dump.write_text("dummy")
+        wrapper = VolatilityWrapper(
+            dump,
+            VolatilityConfig(symbol_dirs=[tmp_path / "symbols" / "windows"]),
+        )
+
+        diagnostics = {
+            "plugin": "windows.info",
+            "missing_symbols": [
+                {
+                    "pdb_name": "ntkrnlmp.pdb",
+                    "guidage": "ABCDEF1234",
+                    "filename": "ntkrnlmp.pd_",
+                    "url": "http://msdl.microsoft.com/download/symbols/ntkrnlmp.pdb/ABCDEF1234/ntkrnlmp.pd_",
+                }
+            ],
+            "requirements": ["plugins.Info.kernel.symbol_table_name"],
+        }
+
+        enriched = wrapper.enrich_symbol_diagnostics(diagnostics)
+
+        assert "helper_script" in enriched
+        helper_path = Path(enriched["helper_script"])
+        assert helper_path.exists()
+        content = helper_path.read_text()
+        assert "ntkrnlmp.pdb" in content
+        assert "curl -fL" in content
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

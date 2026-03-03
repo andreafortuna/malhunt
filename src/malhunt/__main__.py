@@ -33,13 +33,14 @@ def print_usage(prog: str) -> None:
     Args:
         prog: Program name
     """
-    print(f"Usage: {prog} <memory_dump> [--rules <yara_rules>] [--verbose] [--auto-symbols]")
+    print(f"Usage: {prog} <memory_dump> [--rules <yara_rules>] [--verbose] [--no-auto-symbols]")
     print()
     print("Arguments:")
     print("  memory_dump      Path to memory dump file")
     print("  --rules FILE     Path to custom YARA rules file")
     print("  --verbose        Enable verbose output")
-    print("  --auto-symbols   Try best-effort recovery of missing Windows symbols")
+    print("  --auto-symbols   (default) Try best-effort recovery of missing Windows symbols")
+    print("  --no-auto-symbols Disable automatic symbol recovery")
     print("  --version        Show version and exit")
     print("  --help           Show this help message")
 
@@ -58,7 +59,7 @@ def main(args: list[str] = None) -> int:
     
     # Parse arguments
     verbose = "--verbose" in args
-    auto_symbols = "--auto-symbols" in args
+    auto_symbols = "--no-auto-symbols" not in args
     setup_logging(verbose)
     
     if "--version" in args:
