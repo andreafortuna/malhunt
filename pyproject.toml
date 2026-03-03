@@ -1,17 +1,57 @@
-[project]
+[tool.poetry]
 name = "malhunt"
-version = "0.1.0"
-description = ""
-authors = [
-    {name = "Andrea Fortuna"}
-]
+version = "0.4.0"
+description = "Hunt malware in memory dumps with Volatility3"
+authors = ["Andrea Fortuna <andrea@andreafortuna.org>"]
 readme = "README.md"
-requires-python = ">=3.9"
-dependencies = [
-    "requests (>=2.32.4,<3.0.0)"
+license = "MIT"
+repository = "https://github.com/andreafortuna/malhunt"
+homepage = "https://github.com/andreafortuna/malhunt"
+documentation = "https://malhunt.readthedocs.io"
+packages = [
+    {include = "malhunt", from = "src"}
 ]
 
+[tool.poetry.dependencies]
+python = "^3.9"
+volatility3 = "^2.0.0"
+yara-python = "^4.3.0"
+requests = "^2.32.0"
+pyclamd = "^0.4.0"
+pydantic = "^2.0.0"
+loguru = "^0.7.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.0.0"
+pytest-cov = "^4.0.0"
+black = "^23.0.0"
+ruff = "^0.1.0"
+mypy = "^1.0.0"
+ipython = "^8.0.0"
+
+[tool.poetry.group.docs.dependencies]
+sphinx = "^5.0.0"
+sphinx-rtd-theme = "^1.0.0"
+myst-parser = "^0.18.0"
+
+[tool.poetry.scripts]
+malhunt = "malhunt.__main__:main"
 
 [build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
+requires = ["poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 100
+target-version = ['py310']
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+select = ["E", "F", "W", "I"]
+
+[tool.mypy]
+python_version = "3.10"
+check_untyped_defs = true
+disallow_untyped_defs = true
+warn_unused_ignores = true
