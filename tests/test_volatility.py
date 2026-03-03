@@ -269,6 +269,47 @@ class TestVolatilityYaraTimeout:
             assert second_call.kwargs.get("timeout") == 1800
 
 
+class TestVolatilityYaraDependencyErrors:
+    """Test missing YARA backend handling."""
+
+    @patch('malhunt.volatility.VolatilityWrapper._find_volatility')
+    def test_detects_yara_dependency_error_signature(self, mock_find):
+        mock_find.return_value = Path("/usr/bin/vol")
+
+        error = VolatilityError(
+            "Volatility command failed",
+            plugin="windows.vadyarascan",
+            returncode=1,
+            stderr=(
+                "Neither yara-x nor yara-python (>3.8.0) module was found, "
+                "plugin (and dependent plugins) not available"
+            ),
+        )
+
+        assert VolatilityWrapper.is_yara_dependency_error(error) is True
+
+    @patch.object(VolatilityWrapper, '_run_command')
+    @patch('malhunt.volatility.VolatilityWrapper._find_volatility')
+    def test_yarascan_raises_actionable_error_on_missing_yara_backend(self, mock_find, mock_run_cmd):
+        mock_find.return_value = Path("/usr/bin/vol")
+        mock_run_cmd.side_effect = VolatilityError(
+            "Volatility command failed",
+            plugin="windows.vadyarascan",
+            returncode=1,
+            stderr=(
+                "Neither yara-x nor yara-python (>3.8.0) module was found, "
+                "plugin (and dependent plugins) not available"
+            ),
+        )
+
+        import tempfile
+        with tempfile.NamedTemporaryFile() as dump, tempfile.NamedTemporaryFile(suffix=".yar") as rules:
+            wrapper = VolatilityWrapper(Path(dump.name))
+
+            with pytest.raises(VolatilityError, match="YARA backend not available"):
+                wrapper.yarascan(Path(rules.name))
+
+
 class TestVolatilityCache:
     """Test caching functionality."""
     

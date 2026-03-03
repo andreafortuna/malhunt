@@ -238,6 +238,18 @@ class VolatilityWrapper:
         )
 
     @staticmethod
+    def is_yara_dependency_error(error: Exception) -> bool:
+        """Return True if error indicates missing YARA backend for Volatility."""
+        if not isinstance(error, VolatilityError):
+            return False
+        combined = "\n".join([str(error), error.stdout or "", error.stderr or ""]).lower()
+        return (
+            "neither yara-x nor yara-python" in combined
+            or "yara-python (>3.8.0) module was found" in combined
+            or "plugin (and dependent plugins) not available" in combined
+        )
+
+    @staticmethod
     def _extract_symbol_download_urls(text: str) -> List[str]:
         """Extract symbol-server download URLs from Volatility output text."""
         pattern = re.compile(r"https?://[^\s]+/download/symbols/[^\s]+", re.IGNORECASE)
@@ -619,6 +631,15 @@ class VolatilityWrapper:
                 logger.debug(f"YARA scan found {match_count} rule matches")
                 return stdout
             except VolatilityError as error:
+                if self.is_yara_dependency_error(error):
+                    raise VolatilityError(
+                        "YARA backend not available for Volatility. Install yara-python in the same Python environment used by 'vol' (or use yara-x), then retry.",
+                        plugin=error.plugin,
+                        returncode=error.returncode,
+                        stdout=error.stdout,
+                        stderr=error.stderr,
+                    )
+
                 if "timed out" in str(error).lower() and yara_timeout < 3600:
                     previous_timeout = yara_timeout
                     yara_timeout = min(yara_timeout * 2, 3600)
