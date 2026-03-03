@@ -7,8 +7,8 @@ from unittest.mock import Mock, patch, MagicMock
 
 from malhunt.models import SuspiciousProcess
 from malhunt.utils import (
-    check_exclusions, list_yara_files, remove_incompatible_imports,
-    fix_duplicated_rules, banner_logo
+    check_exclusions, remove_incompatible_imports,
+    fix_duplicated_rules, banner_logo, sanitize_yara_rules_file
 )
 from malhunt.volatility import VolatilityConfig, VolatilityError
 
@@ -117,49 +117,90 @@ private rule is__elf {
         assert result.count("private rule is__elf") == 1
 
 
-class TestYaraFileDiscovery:
-    """Test YARA file discovery."""
-    
-    def test_list_yara_files_empty_dir(self):
-        """Test with empty directory."""
-        with TemporaryDirectory() as tmpdir:
-            malhunt_home = Path(tmpdir)
-            files = list_yara_files(malhunt_home)
-            
-            assert files == []
-    
-    def test_list_yara_files_finds_yar(self):
-        """Test finding .yar files."""
-        with TemporaryDirectory() as tmpdir:
-            malhunt_home = Path(tmpdir)
-            rules_dir = malhunt_home / "rules" / "malware"
-            rules_dir.mkdir(parents=True)
-            
-            # Create test files
-            (rules_dir / "test.yar").touch()
-            (rules_dir / "test.yara").touch()
-            (rules_dir / "test.txt").touch()
-            
-            files = list_yara_files(malhunt_home)
-            
-            assert len(files) == 2
-            assert any(f.name == "test.yar" for f in files)
-            assert any(f.name == "test.yara" for f in files)
-            assert not any(f.name == "test.txt" for f in files)
-    
-    def test_list_yara_files_recursive(self):
-        """Test recursive search in subdirectories."""
-        with TemporaryDirectory() as tmpdir:
-            malhunt_home = Path(tmpdir)
-            
-            # Create nested structure
-            (malhunt_home / "rules" / "malware" / "subdir").mkdir(parents=True)
-            (malhunt_home / "rules" / "malware" / "test1.yar").touch()
-            (malhunt_home / "rules" / "malware" / "subdir" / "test2.yar").touch()
-            
-            files = list_yara_files(malhunt_home)
-            
-            assert len(files) == 2
+class TestPrepareRules:
+    """Ensure prepare_rules downloads and unpacks YARA rules."""
+
+    def test_prepare_rules_download(self, tmp_path, monkeypatch):
+        # create dummy dump file
+        dump = tmp_path / "dump.vmem"
+        dump.write_text("dummy")
+
+        from malhunt.core import Malhunt
+        mh = Malhunt(dump)
+        mh.malhunt_home = tmp_path / ".malhunt"
+        mh.malhunt_home.mkdir()
+        mh.rules_file = mh.malhunt_home / "malware_rules.yar"
+
+        # build fake zip archive in memory
+        import io, zipfile
+        fake = io.BytesIO()
+        with zipfile.ZipFile(fake, 'w') as zf:
+            zf.writestr('packages/full/yara-rules-full.yar', 'rule test { condition: true }')
+        fake.seek(0)
+
+        class DummyResp:
+            status_code = 200
+            content = fake.getvalue()
+            def raise_for_status(self):
+                return
+
+        import requests
+        monkeypatch.setattr(requests, 'get', lambda url, timeout: DummyResp())
+
+        success = mh.prepare_rules()
+        assert success
+        assert mh.rules_file.exists()
+        assert 'rule test' in mh.rules_file.read_text()
+
+    def test_prepare_rules_download_failed(self, tmp_path, monkeypatch):
+        """Simulate HTTP error during download."""
+        dump = tmp_path / "dump.vmem"
+        dump.write_text("dummy")
+
+        from malhunt.core import Malhunt
+        mh = Malhunt(dump)
+        mh.malhunt_home = tmp_path / ".malhunt"
+        mh.malhunt_home.mkdir()
+        mh.rules_file = mh.malhunt_home / "malware_rules.yar"
+
+        class DummyResp:
+            status_code = 404
+            content = b""
+            def raise_for_status(self):
+                raise Exception("Not found")
+
+        import requests
+        monkeypatch.setattr(requests, 'get', lambda url, timeout: DummyResp())
+
+        success = mh.prepare_rules()
+        assert not success
+        assert not mh.rules_file.exists()
+
+    def test_prepare_rules_bad_archive(self, tmp_path, monkeypatch):
+        """Simulate downloading a non-zip or corrupted file."""
+        dump = tmp_path / "dump.vmem"
+        dump.write_text("dummy")
+
+        from malhunt.core import Malhunt
+        mh = Malhunt(dump)
+        mh.malhunt_home = tmp_path / ".malhunt"
+        mh.malhunt_home.mkdir()
+        mh.rules_file = mh.malhunt_home / "malware_rules.yar"
+
+        class DummyResp:
+            status_code = 200
+            content = b"not a zip"
+            def raise_for_status(self):
+                return
+
+        import requests
+        monkeypatch.setattr(requests, 'get', lambda url, timeout: DummyResp())
+
+        success = mh.prepare_rules()
+        assert not success
+        assert not mh.rules_file.exists()
+
+
 
 
 class TestRemoveIncompatibleImports:
@@ -227,6 +268,27 @@ class TestRemoveIncompatibleImports:
             
             assert len(filtered) == 0
 
+    def test_sanitize_yara_rules_file_removes_imphash_rule(self):
+        """Sanitizer should drop rule blocks containing imphash references."""
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = root / "in.yar"
+            dest = root / "out.yar"
+
+            source.write_text(
+                'import "hash"\n'
+                'rule KeepMe { condition: true }\n'
+                'rule DropMe { condition: pe.imphash() == "abc" }\n'
+            )
+
+            removed = sanitize_yara_rules_file(source, dest)
+
+            content = dest.read_text()
+            assert removed >= 1
+            assert "DropMe" not in content
+            assert "KeepMe" in content
+            assert 'import "hash"' not in content
+
 
 class TestVolatilityConfig:
     """Test VolatilityConfig settings."""
@@ -255,6 +317,65 @@ class TestVolatilityConfig:
         assert config.cache_results is False
 
 
+class TestIdentifyProfile:
+    """Ensure memory profile detection uses multiple heuristics."""
+
+    def _make_mh(self, tmp_path):
+        from malhunt.core import Malhunt
+        dump = tmp_path / "dump.vmem"
+        dump.write_text("dummy")
+        mh = Malhunt(dump)
+        return mh
+
+    def test_os_name_present(self, tmp_path, monkeypatch):
+        mh = self._make_mh(tmp_path)
+        monkeypatch.setattr(mh.vol, "imageinfo", lambda: {"os_name": "Windows 7 (x64)",
+                                                               "info": {},
+                                                               "suggested_profiles": []})
+        assert mh.identify_profile() == "Windows 7 (x64)"
+
+    def test_guess_profile_success(self, tmp_path, monkeypatch):
+        mh = self._make_mh(tmp_path)
+        mh_input = {"os_name": "",
+                    "info": {"ntmajorversion": "6",
+                             "ntminorversion": "1",
+                             "is64bit": "True"},
+                    "suggested_profiles": []}
+        monkeypatch.setattr(mh.vol, "imageinfo", lambda: mh_input)
+
+        def fake_run(*args, **kwargs):
+            if any("--profile=Windows.61x64" in arg for arg in args):
+                return ("PID    1\n", "")
+            raise VolatilityError("bad")
+        monkeypatch.setattr(mh.vol, "_run_command", fake_run)
+
+        assert mh.identify_profile() == "Windows.61x64"
+
+    def test_suggested_profiles(self, tmp_path, monkeypatch):
+        mh = self._make_mh(tmp_path)
+        mh_input = {"os_name": "",
+                    "info": {},
+                    "suggested_profiles": ["Windows.10x64", "Windows.7SP1x64"]}
+        monkeypatch.setattr(mh.vol, "imageinfo", lambda: mh_input)
+
+        def fake_run(*args, **kwargs):
+            # first candidate fails, second succeeds
+            if any("Windows.10x64" in arg for arg in args):
+                raise VolatilityError("nope")
+            return ("PID 1", "")
+        monkeypatch.setattr(mh.vol, "_run_command", fake_run)
+
+        assert mh.identify_profile() == "Windows.7SP1x64"
+
+    def test_no_profile_found(self, tmp_path, monkeypatch):
+        mh = self._make_mh(tmp_path)
+        monkeypatch.setattr(mh.vol, "imageinfo", lambda: {"os_name": "",
+                                                            "info": {},
+                                                            "suggested_profiles": []})
+        monkeypatch.setattr(mh.vol, "_run_command", lambda *a, **k: (_ for _ in ()).throw(VolatilityError("fail")))
+        assert mh.identify_profile() is None
+
+
 class TestBannerLogo:
     """Test banner logo generation."""
     
@@ -262,7 +383,8 @@ class TestBannerLogo:
         """Test banner contains expected text."""
         banner = banner_logo()
         
-        assert "Malhunt" in banner or "MALHUNT" in banner
+        # banner text changed; ensure it contains the slogan instead
+        assert "Hunt malware" in banner
         assert "Andrea Fortuna" in banner
     
     def test_banner_not_empty(self):

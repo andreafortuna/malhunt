@@ -1,5 +1,6 @@
 """Scanning modules for malware detection."""
 
+import re
 from pathlib import Path
 from typing import List
 
@@ -11,6 +12,9 @@ from .volatility import VolatilityWrapper
 
 class YaraScanner:
     """YARA-based malware scanner."""
+
+    # default words to filter out noisy rules, same as in core
+    DEFAULT_EXCLUDED_WORDS = ['Str_Win32_', 'SurtrStrings']
     
     def __init__(self, vol: VolatilityWrapper, rule_file: Path, 
                  excluded_words: List[str] = None):
@@ -53,7 +57,8 @@ class YaraScanner:
                 parts = line.split()
                 if len(parts) >= 4:
                     process = parts[1]
-                    pid = parts[3]
+                    # pid may have trailing ']' from "1234]" so strip non-digits
+                    pid = parts[3].rstrip("]")
                     
                     # Check exclusions
                     if any(word in current_rule for word in self.excluded_words):
@@ -114,7 +119,7 @@ class MalfindScanner:
                 parts = line.split()
                 if len(parts) >= 4:
                     process = parts[1]
-                    pid = parts[3]
+                    pid = parts[3].rstrip("]")
                     
                     proc = SuspiciousProcess(
                         rule="malfind",
@@ -167,43 +172,82 @@ class NetworkScanner:
         processes = []
         connection_count = 0
         malicious_count = 0
-        
-        for line in output.split('\n'):
-            if not line.strip() or "LISTENING" in line:
-                continue
-            
-            parts = line.split()
-            if len(parts) >= 5:
-                try:
-                    ip = parts[2].split(':')[0]
-                    pid = parts[4]
-                    
-                    # Check if IP is malicious (if checker provided)
-                    if self.ip_checker:
-                        is_malicious = False
-                        try:
-                            is_malicious = self.ip_checker(ip)
-                        except Exception as e:
-                            logger.debug(f"Error checking IP {ip}: {e}")
-                        
-                        if not is_malicious:
-                            connection_count += 1
-                            continue
-                    
+
+        # temporary state for key/value format
+        current_ip = None
+        current_pid = None
+
+        ip_port_pattern = re.compile(r"\b(\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?\b")
+
+        def flush_record():
+            nonlocal current_ip, current_pid, connection_count, malicious_count
+            if current_ip and current_pid:
+                is_malicious = True
+                if self.ip_checker:
+                    try:
+                        is_malicious = self.ip_checker(current_ip)
+                    except Exception as e:
+                        logger.debug(f"Error checking IP {current_ip}: {e}")
+                if not is_malicious:
+                    connection_count += 1
+                else:
                     malicious_count += 1
                     proc = SuspiciousProcess(
                         rule="network",
                         process="N.A.",
-                        pid=pid
+                        pid=current_pid
                     )
-                    
-                    if not any(p.pid == pid for p in processes):
+                    if not any(p.pid == current_pid for p in processes):
                         processes.append(proc)
-                        logger.warning(f"Suspicious connection #{malicious_count}: {ip} (PID: {pid})")
-                
-                except (IndexError, ValueError) as e:
-                    logger.debug(f"Failed to parse connection line: {line[:50]}...")
-        
+                        connection_count += 1
+                        logger.warning(f"Suspicious connection #{malicious_count}: {current_ip} (PID: {current_pid})")
+            current_ip = None
+            current_pid = None
+
+        for line in output.split('\n'):
+            stripped = line.strip()
+            if not stripped:
+                flush_record()
+                continue
+
+            if stripped.startswith(("Volatility", "Progress:")):
+                continue
+
+            if stripped.startswith("Offset") and ("Foreign" in stripped or "Remote" in stripped):
+                # table header
+                continue
+
+            if "LISTENING" in stripped:
+                continue
+
+            # key/value-style output
+            if stripped.startswith("Remote:"):
+                parts = stripped.split()
+                if len(parts) >= 2:
+                    current_ip = parts[1].split(':')[0]
+                continue
+            if stripped.startswith("PID:"):
+                parts = stripped.split()
+                if len(parts) >= 2:
+                    current_pid = parts[1]
+                continue
+
+            # table-style output (netscan/connscan)
+            columns = stripped.split()
+            if len(columns) >= 3:
+                ips = ip_port_pattern.findall(stripped)
+                pid_candidates = [token for token in columns if token.isdigit()]
+                if ips and pid_candidates:
+                    # usually second IP is remote/foreign; fall back to first
+                    remote_ip = ips[1] if len(ips) > 1 else ips[0]
+                    pid = pid_candidates[-1]
+                    current_ip = remote_ip
+                    current_pid = pid
+                    flush_record()
+
+        # flush any last key/value record
+        flush_record()
+
         total_checked = connection_count + malicious_count
         logger.info(f"Network scan complete: checked {total_checked} connections, "
                    f"found {len(processes)} suspicious")

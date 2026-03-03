@@ -5,7 +5,7 @@
 Before installing malhunt, ensure you have the following:
 
 - **Python 3.10 or later**
-- **Git** (for cloning and downloading YARA rules)
+- **Git** (optional; previously used for cloning YARA rules)
 - **Volatility3** (≥2.0.0)
 - ClamAV (optional, for antivirus scanning)
 
@@ -30,7 +30,7 @@ pip install malhunt
 ```bash
 # Install system dependencies
 sudo apt-get update
-sudo apt-get install -y python3.10 python3-pip git volatility3
+sudo apt-get install -y python3.10 python3-pip volatility3
 
 # Install ClamAV (optional)
 sudo apt-get install -y clamav
@@ -43,7 +43,7 @@ pip install &lt;malhunt
 
 ```bash
 # Install system dependencies
-sudo dnf install -y python3.10 python3-pip git volatility3
+sudo dnf install -y python3.10 python3-pip volatility3
 
 # Install ClamAV (optional)
 sudo dnf install -y clamav

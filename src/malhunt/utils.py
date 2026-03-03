@@ -1,6 +1,7 @@
 """Utility functions for malhunt."""
 
 import os
+import re
 import shutil
 import time
 from pathlib import Path
@@ -47,28 +48,6 @@ def clean_up(malhunt_home: Path) -> None:
             logger.info("Cleaned up old YARA rules cache")
 
 
-def list_yara_files(malhunt_home: Path) -> list[Path]:
-    """Recursively find all YARA rule files.
-    
-    Args:
-        malhunt_home: Path to malhunt home directory
-        
-    Returns:
-        List of paths to YARA files
-    """
-    yara_files = []
-    
-    for search_dir in ["malware", "Webshells"]:
-        rules_path = malhunt_home / "rules" / search_dir
-        if not rules_path.exists():
-            continue
-            
-        for yara_file in rules_path.rglob("*.yar"):
-            yara_files.append(yara_file)
-        for yara_file in rules_path.rglob("*.yara"):
-            yara_files.append(yara_file)
-    
-    return sorted(yara_files)
 
 
 def remove_incompatible_imports(files: list[Path]) -> list[Path]:
@@ -94,6 +73,125 @@ def remove_incompatible_imports(files: list[Path]) -> list[Path]:
             filtered.append(yara_file)
     
     return filtered
+
+
+def sanitize_yara_rules_file(source: Path, destination: Path) -> int:
+    """Sanitize a merged YARA file by removing unsupported imports/rules.
+
+    This is designed for very large merged rule files where dropping the whole
+    file due to a single incompatible token is undesirable.
+
+    Args:
+        source: Input YARA file path
+        destination: Output sanitized YARA file path
+
+    Returns:
+        Number of removed rule blocks
+    """
+    incompatible_tokens = [
+        'import "math"',
+        'import "cuckoo"',
+        'import "hash"',
+        'imphash',
+    ]
+
+    content = source.read_text(errors="ignore")
+    lines = content.splitlines(keepends=True)
+
+    output_lines: list[str] = []
+    rule_buffer: list[str] = []
+    in_rule = False
+    seen_open_brace = False
+    brace_depth = 0
+    removed_rules = 0
+
+    rule_start = re.compile(r"^\s*(?:(?:private|global)\s+)*rule\s+[A-Za-z0-9_]+\b")
+
+    def flush_rule_block() -> None:
+        nonlocal in_rule, seen_open_brace, brace_depth, rule_buffer, removed_rules
+        block_text = "".join(rule_buffer).lower()
+        if any(token in block_text for token in incompatible_tokens):
+            removed_rules += 1
+        else:
+            output_lines.extend(rule_buffer)
+        in_rule = False
+        seen_open_brace = False
+        brace_depth = 0
+        rule_buffer = []
+
+    for line in lines:
+        lowered = line.lower()
+
+        if not in_rule and rule_start.match(line):
+            in_rule = True
+            seen_open_brace = "{" in line
+            brace_depth = line.count("{") - line.count("}")
+            rule_buffer = [line]
+            if seen_open_brace and brace_depth <= 0:
+                flush_rule_block()
+            continue
+
+        if in_rule:
+            rule_buffer.append(line)
+            if "{" in line:
+                seen_open_brace = True
+            brace_depth += line.count("{") - line.count("}")
+            if seen_open_brace and brace_depth <= 0:
+                flush_rule_block()
+            continue
+
+        # keep non-rule line unless it's a known incompatible import
+        if any(token == lowered.strip() for token in incompatible_tokens[:3]):
+            continue
+        output_lines.append(line)
+
+    if in_rule and rule_buffer:
+        flush_rule_block()
+
+    sanitized_content = "".join(output_lines)
+
+    # Aggressive fallback: remove any remaining imphash-containing rule blocks
+    # that may have escaped the state machine due to unusual rule formatting.
+    if "imphash" in sanitized_content.lower():
+        lines2 = sanitized_content.splitlines(keepends=True)
+        drop_indexes: set[int] = set()
+
+        def find_rule_start(index: int) -> Optional[int]:
+            for i in range(index, -1, -1):
+                if rule_start.match(lines2[i]):
+                    return i
+            return None
+
+        for idx, line in enumerate(lines2):
+            if "imphash" not in line.lower():
+                continue
+
+            start = find_rule_start(idx)
+            if start is None:
+                drop_indexes.add(idx)
+                continue
+
+            depth = 0
+            seen_open = False
+            end = start
+            for j in range(start, len(lines2)):
+                depth += lines2[j].count("{") - lines2[j].count("}")
+                if "{" in lines2[j]:
+                    seen_open = True
+                end = j
+                if seen_open and depth <= 0:
+                    break
+
+            for j in range(start, end + 1):
+                drop_indexes.add(j)
+            removed_rules += 1
+
+        sanitized_content = "".join(
+            line for i, line in enumerate(lines2) if i not in drop_indexes
+        )
+
+    destination.write_text(sanitized_content)
+    return removed_rules
 
 
 def fix_duplicated_rules(content: str) -> str:
@@ -125,21 +223,6 @@ def fix_duplicated_rules(content: str) -> str:
     return '\n'.join(filtered)
 
 
-def merge_rules(yara_files: list[Path], output_path: Path) -> None:
-    """Merge multiple YARA files into a single file.
-    
-    Args:
-        yara_files: List of YARA file paths
-        output_path: Output file path
-    """
-    merged_content = ""
-    
-    for yara_file in yara_files:
-        merged_content += yara_file.read_text() + "\n\n"
-    
-    merged_content = fix_duplicated_rules(merged_content)
-    output_path.write_text(merged_content)
-    logger.info(f"Merged {len(yara_files)} YARA rules into {output_path}")
 
 
 def banner_logo() -> str:

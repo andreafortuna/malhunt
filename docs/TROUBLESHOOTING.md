@@ -235,9 +235,12 @@ ERROR: Failed to download rules
    ```
 
 2. **Manual download:**
+   Instead of relying on the automatic ZIP fetch, you can manually place a merged YARA file:
    ```bash
    mkdir -p ~/.malhunt
-   git clone https://github.com/Yara-Rules/rules.git ~/.malhunt/rules
+   # download the latest yara-rules-full.yar from
+   # https://github.com/YARAHQ/yara-forge/releases/latest/
+   # and save it as ~/.malhunt/malware_rules.yar
    ```
 
 3. **Use local rules:**

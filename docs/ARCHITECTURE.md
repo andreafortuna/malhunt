@@ -36,7 +36,7 @@ The main orchestrator class that coordinates all analysis phases.
 **Responsibilities:**
 - Initialize analysis environment
 - Prepare YARA rules
-- Identify memory profile
+- Identify memory profile (with improved heuristics)
 - Coordinate scanners
 - Manage artifact collection
 - Report findings
@@ -44,7 +44,8 @@ The main orchestrator class that coordinates all analysis phases.
 **Key Methods:**
 - `__init__()` - Initialize analysis
 - `prepare_rules()` - Download/prepare YARA rules
-- `identify_profile()` - Detect memory dump profile
+- `identify_profile()` - Detect memory dump profile using `windows.info`,
+  guess/validate candidate profiles and honour suggested profiles
 - `run_scans()` - Execute all scanners
 - `collect_artifacts()` - Extract suspicious processes
 - `run_full_analysis()` - Complete workflow
@@ -137,10 +138,10 @@ Helper functions:
 - `get_malhunt_home()` - Get cache directory
 - `check_exclusions()` - Filter excluded rules
 - `clean_up()` - Remove old caches
-- `list_yara_files()` - Find YARA files
 - `remove_incompatible_imports()` - Filter incompatible rules
-- `fix_duplicated_rules()` - Remove duplicate definitions
-- `merge_rules()` - Combine YARA files
+- `fix_duplicated_rules()` - Remove duplicate definitions (used internally for sanity)
+
+The previous list and merge helpers were removed after switching to compressed rule downloads.
 
 ## Execution Flow
 

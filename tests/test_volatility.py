@@ -167,6 +167,29 @@ class TestVolatilityCommand:
             with pytest.raises(VolatilityError, match="timed out"):
                 wrapper._run_command("windows.pslist")
 
+    @patch.object(VolatilityWrapper, '_run_command')
+    @patch('malhunt.volatility.VolatilityWrapper._find_volatility')
+    def test_netscan_fallback_to_connscan(self, mock_find, mock_run_cmd):
+        """Fallback to netstat when netscan is unsupported."""
+        mock_find.return_value = Path("/usr/bin/vol")
+        mock_run_cmd.side_effect = [
+            VolatilityError(
+                "Volatility command failed",
+                plugin="windows.netscan",
+                returncode=1,
+                stdout="",
+                stderr="NotImplementedError: This version of Windows is not supported",
+            ),
+            ("netstat output", ""),
+        ]
+
+        import tempfile
+        with tempfile.NamedTemporaryFile() as tmp:
+            wrapper = VolatilityWrapper(Path(tmp.name))
+            result = wrapper.netscan()
+
+            assert result == "netstat output"
+
 
 class TestVolatilityImageInfo:
     """Test imageinfo parsing."""
@@ -184,8 +207,24 @@ class TestVolatilityImageInfo:
             result = wrapper.imageinfo()
             
             assert "raw" in result
-            assert "profiles" in result
+            # result now contains detailed info dictionary instead of profiles list
+            assert "info" in result
             assert "is_windows" in result
+
+    @patch.object(VolatilityWrapper, '_run_command')
+    @patch('malhunt.volatility.VolatilityWrapper._find_volatility')
+    def test_imageinfo_suggested_parsing(self, mock_find, mock_run_cmd):
+        """Ensure suggested profiles are extracted from plugin output."""
+        mock_find.return_value = Path("/usr/bin/vol")
+        mock_run_cmd.return_value = ("Suggested : Windows.7SP1x64, Windows.10x64\n", "")
+
+        import tempfile
+        with tempfile.NamedTemporaryFile() as tmp:
+            wrapper = VolatilityWrapper(Path(tmp.name))
+            result = wrapper.imageinfo()
+
+            assert "suggested_profiles" in result
+            assert result["suggested_profiles"] == ["Windows.7SP1x64", "Windows.10x64"]
 
 
 class TestVolatilityCache:
@@ -220,6 +259,39 @@ class TestVolatilityCache:
             assert stats["size"] == 1
             assert "entries" in stats
             assert stats["memory_bytes"] > 0
+
+
+class TestVolatilitySymbolDiagnostics:
+    """Test symbol diagnostics extraction helpers."""
+
+    @patch('malhunt.volatility.VolatilityWrapper._find_volatility')
+    def test_extract_missing_symbol_details(self, mock_find):
+        mock_find.return_value = Path("/usr/bin/vol")
+
+        import tempfile
+        with tempfile.NamedTemporaryFile() as tmp:
+            wrapper = VolatilityWrapper(Path(tmp.name))
+
+            payload = (
+                "Unsatisfied requirement plugins.Info.kernel.symbol_table_name:\n"
+                "Downloading http://msdl.microsoft.com/download/symbols/"
+                "ntkrnlmp.pdb/ABCDEF1234/ntkrnlmp.pd_\n"
+            )
+            err = VolatilityError(
+                "Volatility command failed",
+                plugin="windows.info",
+                returncode=1,
+                stdout=payload,
+                stderr="",
+            )
+
+            diagnostics = wrapper.get_symbol_diagnostics(err)
+
+            assert diagnostics["plugin"] == "windows.info"
+            assert diagnostics["requirements"] == ["plugins.Info.kernel.symbol_table_name"]
+            assert len(diagnostics["missing_symbols"]) == 1
+            assert diagnostics["missing_symbols"][0]["pdb_name"] == "ntkrnlmp.pdb"
+            assert diagnostics["missing_symbols"][0]["guidage"] == "ABCDEF1234"
 
 
 if __name__ == "__main__":

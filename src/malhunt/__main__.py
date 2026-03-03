@@ -33,12 +33,13 @@ def print_usage(prog: str) -> None:
     Args:
         prog: Program name
     """
-    print(f"Usage: {prog} <memory_dump> [--rules <yara_rules>] [--verbose]")
+    print(f"Usage: {prog} <memory_dump> [--rules <yara_rules>] [--verbose] [--auto-symbols]")
     print()
     print("Arguments:")
     print("  memory_dump      Path to memory dump file")
     print("  --rules FILE     Path to custom YARA rules file")
     print("  --verbose        Enable verbose output")
+    print("  --auto-symbols   Try best-effort recovery of missing Windows symbols")
     print("  --version        Show version and exit")
     print("  --help           Show this help message")
 
@@ -57,6 +58,7 @@ def main(args: list[str] = None) -> int:
     
     # Parse arguments
     verbose = "--verbose" in args
+    auto_symbols = "--auto-symbols" in args
     setup_logging(verbose)
     
     if "--version" in args:
@@ -93,7 +95,7 @@ def main(args: list[str] = None) -> int:
     
     # Run analysis
     try:
-        malhunt = Malhunt(dump_path, rules_file)
+        malhunt = Malhunt(dump_path, rules_file, auto_symbols=auto_symbols)
         malhunt.run_full_analysis()
         return 0
     

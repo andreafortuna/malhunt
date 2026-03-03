@@ -21,7 +21,7 @@ Malhunt is an automated malware hunting tool that analyzes memory dumps using Vo
 #### Requirements
 - Python 3.9+
 - Volatility3 (≥2.0.0)
-- Git (for downloading and managing YARA rules)
+- Git (optional; previously used for downloading YARA rules)
 - ClamAV (optional, for antivirus scanning)
 - Poetry (for development; users can use pip)
 
@@ -75,11 +75,16 @@ Malhunt applies a systematic approach for malware discovery in memory:
 
 1. **Initialization** - Validates memory dump and locates Volatility3 binary
 2. **Cache Cleanup** - Removes old YARA rules (> 1 day) and temporary files
-3. **Rule Preparation** - Downloads latest YARA rules from GitHub or uses cached version
-   - Performs shallow git clone for efficiency
+3. **Rule Preparation** - Downloads latest YARA rules from Yara‑Forge ZIP archive (or uses cached version)
+   - Fetches `yara-rules-full.yar` from the Yara‑Forge release page
    - Filters incompatible YARA rules
-   - Deduplicates and merges into single malware_rules.yar
-4. **Profile Identification** - Detects OS variant from memory dump using `windows.info`
+   - Writes the result to `malware_rules.yar` in the user cache
+4. **Profile Identification** - Detects OS variant from memory dump
+   using Volatility3's `windows.info` plugin. Malhunt parses the plugin
+   output and, if necessary, constructs and validates candidate profiles
+   (falling back to suggested profiles or a small set of common names),
+   mirroring the official Volatility3 recommendation for automatic
+   detection.
 5. **Phase 1: YARA Scanning** - 📊 Applies comprehensive YARA rules (3310+ rules) to memory
 6. **Phase 2: Malfind Scanning** - 💉 Detects injected code and suspicious memory allocations
 7. **Phase 3: Network Scanning** - 🌐 Analyzes network connections for malicious IPs
@@ -168,7 +173,7 @@ poetry run python3 -m malhunt /path/to/dump.vmem
 - **PyClamd** (≥0.4.0) - ClamAV integration
 
 ### System Requirements
-- **Git** - For downloading YARA rules repository
+- **Git** (optional) - previously used for cloning rules, no longer required
 - **ClamAV** (optional) - Antivirus scanning support
 
 ### Build & Development
@@ -184,7 +189,6 @@ Malhunt stores configuration and cached data in `~/.malhunt/`:
 
 ### Cache Files
 - **`malware_rules.yar`** - Merged YARA rules (auto-updated if > 1 day old)
-- **`rules/`** - Downloaded YARA rule repository (shallow git clone)
 
 ### Customization
 Volatility3 execution can be customized via `VolatilityConfig`:
